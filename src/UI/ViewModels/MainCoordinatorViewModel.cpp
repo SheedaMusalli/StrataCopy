@@ -13,6 +13,8 @@
 #include <QJsonDocument>
 #include <QLocale>
 #include <QSaveFile>
+#include <QSettings>
+#include <QUuid>
 #include <QStandardPaths>
 #include <powrprof.h>
 #include <winioctl.h>
@@ -47,8 +49,9 @@ bool MainCoordinatorViewModel::importExplorerRequest(const QString &path) {
     const auto items = request.value("sources").toArray();
     const auto operation = request.value("operation").toString();
     const auto destination = request.value("destination").toString();
-    if (items.isEmpty() || items.size() > 4096 || (operation != "copy" && operation != "move") ||
-        !QFileInfo(destination).isDir()) {
+    const bool deleting = operation == "delete" || operation == "recycle";
+    if (items.isEmpty() || items.size() > 4096 || (!deleting && operation != "copy" && operation != "move") ||
+        (!deleting && !QFileInfo(destination).isDir())) {
         m_message = "Explorer paste request is incomplete.";
         file.remove();
         emit stateChanged();
@@ -64,22 +67,91 @@ bool MainCoordinatorViewModel::importExplorerRequest(const QString &path) {
         }
         sources << value.toString();
     }
+    if (deleting) {
+        for (const auto &source : sources) {
+            if (QDir(source).isRoot() ||
+                GetFileAttributesW(reinterpret_cast<LPCWSTR>(QDir::toNativeSeparators(source).utf16())) ==
+                    INVALID_FILE_ATTRIBUTES) {
+                file.remove();
+                return false;
+            }
+        }
+        m_sources = sources;
+        m_destination.clear();
+        m_explorerRequestPath = path;
+        m_deleting = true;
+        m_permanentDelete = operation == "delete";
+        m_confirmationPending = true;
+        changed();
+        emit stateChanged();
+        emit deletionConfirmationRequired(m_permanentDelete, sources);
+        return true;
+    }
     m_sources = sources;
     m_destination = destination;
     m_explorerRequestPath = path;
+    const auto previousPerformance = m_profile.values;
     m_profile = RobocopyProfile();
+    for (const auto &key :
+         {"performanceMode", "threadCount", "enableMultithreading", "unbufferedIo", "retryCount",
+          "retryWaitSeconds", "enableBandwidthLimit", "interPacketGapMs", "fastFailSafeRetries",
+          "nvmeThreads", "ssdThreads", "hddThreads", "usbThreads", "networkThreads", "unknownThreads"})
+        m_profile.values[key] = previousPerformance.value(key, m_profile.values.value(key));
     if (operation == "move")
         m_profile.values["transferMode"] = 3;
     emit profileChanged();
     changed();
     return start(false, false);
 }
+void MainCoordinatorViewModel::confirmDeletion() {
+    if (!m_confirmationPending || !m_deleting || m_busy)
+        return;
+    m_confirmationPending = false;
+    m_runProfile = RobocopyProfile();
+    m_runClock.start();
+    m_explorerRun = true;
+    auto payload = queueJson();
+    payload["operation"] = m_permanentDelete ? "delete" : "recycle";
+    m_logPath.clear();
+    m_runId = m_storeReady ? m_store.beginRun(payload, {}) : -1;
+    if (m_runId < 0) {
+        m_message = "Cannot journal deletion.";
+        rejectExplorerRequest();
+        return;
+    }
+    m_files.clear();
+    m_graph.clear();
+    m_progress = 0;
+    m_totalBytes = 0;
+    m_totalFiles = m_sources.size();
+    m_outcome.clear();
+    m_message.clear();
+    m_phase = m_permanentDelete ? "Deleting items" : "Moving items to Recycle Bin";
+    m_busy = true;
+    m_paused = false;
+    if (!m_deletion.start(m_sources, m_permanentDelete)) {
+        m_busy = false;
+        m_outcome = "error";
+        m_message = "Could not start deletion. Nothing was removed.";
+        m_store.finishRun(m_runId, "Failed", m_message);
+    }
+    QFile::remove(m_explorerRequestPath);
+    m_explorerRequestPath.clear();
+    emit stateChanged();
+    emit statsChanged();
+    emit runsChanged();
+}
 void MainCoordinatorViewModel::rejectExplorerRequest() {
     m_confirmationPending = false;
+    if (m_deleting) {
+        m_sources.clear();
+        m_deleting = false;
+        changed();
+    }
     if (!m_explorerRequestPath.isEmpty()) {
         QFile::remove(m_explorerRequestPath);
         m_explorerRequestPath.clear();
-        m_message = "Explorer transfer cancelled before copying.";
+        m_message = "Operation cancelled before starting.";
         emit stateChanged();
     }
 }
@@ -88,6 +160,11 @@ MainCoordinatorViewModel::MainCoordinatorViewModel(QObject *parent) : QObject(pa
             [this](quint64 token, const QString &source, const QString &destination) {
                 if (!m_busy)
                     return;
+                if (m_conflictChoice >= 0) {
+                    m_supervisor.resolveConflict(token, m_conflictChoice);
+                    return;
+                }
+                m_conflictToken = token;
                 const QFileInfo from(source), to(destination);
                 emit fileConflictRequired(
                     {{"token", QVariant::fromValue(token)},
@@ -124,6 +201,27 @@ MainCoordinatorViewModel::MainCoordinatorViewModel(QObject *parent) : QObject(pa
         restore(m_store.pending());
     else
         m_message = "Queue journal unavailable: " + m_store.error();
+    QSettings installPreferences;
+    const int installationProfile = installPreferences.value("Installer/performanceProfile", -1).toInt();
+    if (installationProfile >= 0 && installationProfile <= 2) {
+        m_profile.values["performanceMode"] = installationProfile;
+        m_profile.values["enableMultithreading"] = true;
+        m_profile.values["enableBandwidthLimit"] = false;
+        m_profile.values["threadCount"] = installationProfile == 2 ? 32 : installationProfile == 1 ? 4 : 8;
+        m_profile.values["retryCount"] = installationProfile == 2 ? 0 : 2;
+        m_profile.values["retryWaitSeconds"] = installationProfile == 2 ? 0 : 2;
+        m_profile.values["fastFailSafeRetries"] = true;
+        m_profile.values["unbufferedIo"] = false;
+        // Persist before consuming the one-time installer choice.
+        if (m_storeReady && m_store.savePending(queueJson()))
+            installPreferences.remove("Installer/performanceProfile");
+    }
+    m_sources.clear();
+    m_profile.values["transferMode"] = 0;
+    m_performanceSummary =
+        QString("%1 logical processors · %2 GB RAM. Auto checks both drives when a transfer starts.")
+            .arg(DriveHardwareDetector::logicalProcessors())
+            .arg(DriveHardwareDetector::memoryBytes() / (1024ULL * 1024 * 1024));
     m_filter.setSourceModel(&m_files);
     m_flushTimer.setInterval(33);
     connect(&m_flushTimer, &QTimer::timeout, this, &MainCoordinatorViewModel::flushEntries);
@@ -165,45 +263,63 @@ MainCoordinatorViewModel::MainCoordinatorViewModel(QObject *parent) : QObject(pa
         emit statsChanged();
         emit stateChanged();
     });
-    connect(&m_supervisor, &RobocopyProcessSupervisor::finished, this,
-            [this](bool success, bool cancelled, const QString &message) {
-                while (true) {
-                    auto entries = m_supervisor.takeEntries(8192);
-                    if (entries.isEmpty())
-                        break;
-                    m_files.append(std::move(entries));
-                }
-                m_files.settle(success, m_runProfile.flag("dryRunListOnly"));
-                m_busy = false;
-                m_paused = false;
-                m_outcome = success ? "success" : (cancelled ? "cancelled" : "error");
-                m_phase =
-                    success ? (m_runProfile.flag("dryRunListOnly") ? "Preview complete" : "Transfer complete")
-                            : (cancelled ? "Transfer cancelled" : "Needs attention");
-                m_message = message;
-                if (success)
-                    m_progress = 1;
-                m_stats["readMbps"] = 0;
-                m_stats["writeMbps"] = 0;
-                m_stats["iops"] = 0;
-                if (m_storeReady &&
-                    !m_store.finishRun(m_runId, cancelled ? "Cancelled" : (success ? "Completed" : "Failed"),
-                                       message))
-                    m_message += " · Could not update the journal.";
+    const auto finishOperation = [this](bool success, bool cancelled, const QString &message) {
+        while (true) {
+            auto entries = m_supervisor.takeEntries(8192);
+            if (entries.isEmpty())
+                break;
+            m_files.append(std::move(entries));
+        }
+        m_files.settle(success, m_runProfile.flag("dryRunListOnly"));
+        m_busy = false;
+        m_paused = false;
+        m_outcome = success ? "success" : (cancelled ? "cancelled" : "error");
+        m_phase = success ? (m_runProfile.flag("dryRunListOnly") ? "Preview complete" : "Transfer complete")
+                          : (cancelled ? "Transfer cancelled" : "Needs attention");
+        m_message = message;
+        if (success)
+            m_progress = 1;
+        m_stats["readMbps"] = 0;
+        m_stats["writeMbps"] = 0;
+        m_stats["iops"] = 0;
+        if (m_storeReady &&
+            !m_store.finishRun(m_runId, cancelled ? "Cancelled" : (success ? "Completed" : "Failed"),
+                               message))
+            m_message += " · Could not update the journal.";
+        if (success && m_explorerRun)
+            m_destination.clear();
+        m_explorerRun = false;
+        m_sources.clear();
+        m_profile.values["transferMode"] = 0;
+        emit profileChanged();
+        changed();
+        emit stateChanged();
+        emit statsChanged();
+        emit runsChanged();
+        emit commandChanged();
+        if (success && !m_runProfile.flag("dryRunListOnly"))
+            emit transferSucceeded(m_runClock.elapsed());
+        if (success && !m_runProfile.flag("dryRunListOnly") &&
+            QDir(m_dataDir + "/ExplorerRequests").entryList({"*.json"}, QDir::Files).isEmpty())
+            emit completedSuccessfully();
+        if (success && m_runProfile.flag("dryRunListOnly"))
+            emit previewReady();
+    };
+    connect(&m_supervisor, &RobocopyProcessSupervisor::finished, this, finishOperation);
+    connect(&m_deletion, &DeletionSupervisor::finished, this, finishOperation);
+    connect(&m_deletion, &DeletionSupervisor::progress, this,
+            [this](quint64 done, quint64 total, const QString &path) {
+                m_progress = total ? qMin(.99, double(done) / double(total)) : 0;
+                m_phase = (m_permanentDelete ? "Deleting: " : "Recycling: ") + path;
                 emit stateChanged();
                 emit statsChanged();
-                emit runsChanged();
-                emit commandChanged();
-                if (success && !m_runProfile.flag("dryRunListOnly"))
-                    emit completedSuccessfully();
-                if (success && m_runProfile.flag("dryRunListOnly"))
-                    emit previewReady();
             });
 }
 MainCoordinatorViewModel::~MainCoordinatorViewModel() {
     m_saveTimer.stop();
     saveQueue();
     m_supervisor.stopAndWait();
+    m_deletion.stopAndWait();
     if (m_busy && m_storeReady)
         m_store.finishRun(m_runId, "Cancelled",
                           "Application closed during the transfer; completed copies remain.");
@@ -220,6 +336,14 @@ void MainCoordinatorViewModel::setDestination(const QString &text) {
     m_destination = path;
     changed();
 }
+void MainCoordinatorViewModel::resolveFileConflict(quint64 token, int choice, bool all) {
+    if (!m_busy || !m_conflictToken || token != m_conflictToken || choice < 0 || choice > 3)
+        return;
+    m_conflictToken = 0;
+    if (all && choice < 3)
+        m_conflictChoice = choice;
+    m_supervisor.resolveConflict(token, choice);
+}
 void MainCoordinatorViewModel::addSources(const QVariantList &urls) {
     QStringList paths;
     for (const auto &v : urls) {
@@ -230,8 +354,42 @@ void MainCoordinatorViewModel::addSources(const QVariantList &urls) {
     addPaths(paths);
 }
 void MainCoordinatorViewModel::addPaths(const QStringList &paths) {
-    if (m_busy)
+    if (m_confirmationPending || (m_busy && m_deleting)) {
+        m_message = "Finish or cancel the current deletion/confirmation before adding sources.";
+        emit stateChanged();
         return;
+    }
+    if (m_busy) {
+        QStringList valid;
+        for (const auto &path : paths)
+            if (QFileInfo(path).isAbsolute() && QFileInfo::exists(path) && !valid.contains(path))
+                valid << path;
+        const auto directory = m_dataDir + "/ExplorerRequests";
+        QDir().mkpath(directory);
+        if (valid.isEmpty() || valid.size() > 4096 ||
+            QDir(directory).entryList({"*.json"}, QDir::Files).size() >= 64)
+            return;
+        const auto payload =
+            QJsonDocument(QJsonObject{{"sources", QJsonArray::fromStringList(valid)},
+                                      {"destination", m_destination},
+                                      {"operation", (m_runProfile.mode() == TransferMode::MoveFiles ||
+                                                     m_runProfile.mode() == TransferMode::MoveTree)
+                                                        ? "move"
+                                                        : "copy"}})
+                .toJson(QJsonDocument::Compact);
+        QSaveFile request(directory + "/" + QUuid::createUuid().toString(QUuid::WithoutBraces) + ".json");
+        if (payload.size() <= 512 * 1024 && request.open(QIODevice::WriteOnly) &&
+            request.write(payload) == payload.size() && request.commit())
+            m_message = "Added to the queue. These files will transfer to the same destination next.";
+        else
+            m_message = "Could not queue the dropped files.";
+        emit stateChanged();
+        return;
+    }
+    if (m_deleting) {
+        m_deleting = false;
+        emit stateChanged();
+    }
     for (const auto &path : paths) {
         if (!path.trimmed().isEmpty()) {
             const auto normalized = MultiSourceBatcher::normalized(path);
@@ -257,6 +415,37 @@ void MainCoordinatorViewModel::setOption(const QString &key, const QVariant &val
     if (m_busy || !m_profile.values.contains(key))
         return;
     m_profile.values[key] = value;
+    if (QStringList{"nvmeThreads", "ssdThreads", "hddThreads", "usbThreads", "networkThreads",
+                    "unknownThreads"}
+            .contains(key)) {
+        if (m_profile.number("performanceMode") == 2) {
+            m_profile.values["retryCount"] = 2;
+            m_profile.values["retryWaitSeconds"] = 2;
+        }
+        m_profile.values["performanceMode"] = 0;
+        m_profile.values["enableMultithreading"] = true;
+        m_profile.values["enableBandwidthLimit"] = false;
+    }
+    if (key == "threadCount" || key == "enableMultithreading" || key == "enableBandwidthLimit")
+        m_profile.values["performanceMode"] = 3;
+    if (key == "performanceMode") {
+        if (value.toInt() == 1)
+            m_profile.values["threadCount"] = 4;
+        if (value.toInt() == 2) {
+            m_profile.values["fastFailSafeRetries"] = true;
+            m_profile.values["threadCount"] = 32;
+            m_profile.values["retryCount"] = 0;
+            m_profile.values["retryWaitSeconds"] = 0;
+        }
+        if (value.toInt() == 0) {
+            m_profile.values["retryCount"] = 2;
+            m_profile.values["retryWaitSeconds"] = 2;
+        }
+        if (value.toInt() != 3) {
+            m_profile.values["enableMultithreading"] = true;
+            m_profile.values["enableBandwidthLimit"] = false;
+        }
+    }
     if (key == "enableBandwidthLimit" && value.toBool())
         m_profile.values["enableMultithreading"] = false;
     if (key == "enableMultithreading" && value.toBool())
@@ -290,6 +479,8 @@ void MainCoordinatorViewModel::loadPreset(int i) {
     for (auto it = values.cbegin(); it != values.cend(); ++it)
         if (m_profile.values.contains(it.key()))
             m_profile.values[it.key()] = it.value();
+    if (!values.contains("performanceMode") && values.contains("threadCount"))
+        m_profile.values["performanceMode"] = m_profile.number("threadCount") == 128 ? 0 : 3;
     emit profileChanged();
     changed();
 }
@@ -297,7 +488,7 @@ QString MainCoordinatorViewModel::commandPreview() const {
     const auto batch = MultiSourceBatcher::build(m_sources, m_destination, m_profile);
     QStringList lines;
     if (batch.jobs.isEmpty())
-        return "robocopy.exe \"<source>\" \"<destination>\" /E /MT:128 /J /COPY:DAT /R:2 /W:2";
+        return "Robocopy Auto profile";
     for (qsizetype i = 0; i < batch.jobs.size(); ++i)
         lines << RobocopyCommandCompiler::display(batch.jobs[i], m_busy ? m_runProfile : m_profile,
                                                   m_busy ? m_logPath + QString(".job%1.utf16.log").arg(i + 1)
@@ -312,9 +503,32 @@ bool MainCoordinatorViewModel::start(bool dryRun, bool destructiveConfirmed) {
         return false;
     if (destructiveConfirmed)
         m_confirmationPending = false;
+    m_deleting = false;
     auto profile = m_profile;
     if (dryRun)
         profile.values["dryRunListOnly"] = true;
+    const int performance = profile.number("performanceMode");
+    if (performance == 0)
+        profile.values["threadCount"] =
+            DriveHardwareDetector::transferThreads(m_sources, m_destination, profile.values);
+    if (performance == 1)
+        profile.values["threadCount"] = 4;
+    if (performance == 2) {
+        profile.values["fastFailSafeRetries"] = true;
+        profile.values["threadCount"] = 32;
+        profile.values["retryCount"] = 0;
+        profile.values["retryWaitSeconds"] = 0;
+    }
+    m_profile.values["threadCount"] = profile.values["threadCount"];
+    m_performanceSummary =
+        QString("%1 · %2 threads · %3 logical processors · destination: %4")
+            .arg(QStringList{"Auto", "Safe / Silent", "NVMe Extreme", "Manual"}.value(performance, "Manual"))
+            .arg(profile.flag("enableMultithreading") && !profile.flag("enableBandwidthLimit")
+                     ? profile.number("threadCount")
+                     : 1)
+            .arg(DriveHardwareDetector::logicalProcessors())
+            .arg(DriveHardwareDetector::describe(m_destination));
+    emit profileChanged();
     const auto batch = MultiSourceBatcher::build(m_sources, m_destination, profile);
     if (!batch.errors.isEmpty()) {
         m_message = batch.errors.join('\n');
@@ -322,13 +536,10 @@ bool MainCoordinatorViewModel::start(bool dryRun, bool destructiveConfirmed) {
         emit stateChanged();
         return false;
     }
-    if (profile.destructive() && !profile.flag("dryRunListOnly") && !destructiveConfirmed) {
+    if (profile.mode() == TransferMode::Mirror && !profile.flag("dryRunListOnly") && !destructiveConfirmed) {
         m_confirmationPending = true;
         emit destructiveConfirmationRequired(
-            profile.mode() == TransferMode::Mirror
-                ? "Mirror will delete destination files and folders absent from the source.\n\n" +
-                      commandPreview()
-                : "Move will delete source files after Robocopy copies them.\n\n" + commandPreview());
+            "Mirror deletes destination items absent from the source. Continue?");
         return false;
     }
     if (!m_storeReady) {
@@ -336,6 +547,11 @@ bool MainCoordinatorViewModel::start(bool dryRun, bool destructiveConfirmed) {
         emit stateChanged();
         return false;
     }
+    m_conflictChoice = -1;
+    m_conflictToken = 0;
+    m_runClock.start();
+    m_explorerRun = !m_explorerRequestPath.isEmpty();
+    m_runDestination = m_destination;
     m_runProfile = profile;
     m_logPath =
         m_dataDir + "/logs/" + QDateTime::currentDateTimeUtc().toString("yyyyMMdd-hhmmss-zzz") + ".log";
@@ -378,7 +594,10 @@ bool MainCoordinatorViewModel::start(bool dryRun, bool destructiveConfirmed) {
 }
 void MainCoordinatorViewModel::cancel() {
     if (m_busy) {
-        m_supervisor.cancel();
+        if (m_deleting)
+            m_deletion.cancel();
+        else
+            m_supervisor.cancel();
         m_phase = "Cancelling…";
         emit stateChanged();
     }
@@ -486,7 +705,7 @@ void MainCoordinatorViewModel::completionAction(int action) {
         return;
     }
     if (action == 3) {
-        const auto root = QDir::toNativeSeparators(m_destination).left(3);
+        const auto root = QDir::toNativeSeparators(m_runDestination).left(3);
         if (root.size() != 3 || GetDriveTypeW(reinterpret_cast<LPCWSTR>(root.utf16())) != DRIVE_REMOVABLE) {
             m_message = "Automatic eject requires a removable destination drive.";
             emit stateChanged();
@@ -533,6 +752,13 @@ void MainCoordinatorViewModel::restore(const QJsonObject &object) {
     for (auto it = values.cbegin(); it != values.cend(); ++it)
         if (m_profile.values.contains(it.key()))
             m_profile.values[it.key()] = it.value();
+    if (!values.contains("performanceMode") && values.contains("threadCount")) {
+        m_profile.values["performanceMode"] = m_profile.number("threadCount") == 128 ? 0 : 3;
+        if (m_profile.number("performanceMode") == 0) {
+            m_profile.values["threadCount"] = 8;
+            m_profile.values["unbufferedIo"] = false;
+        }
+    }
     if (!object.contains("conflictPolicyRevision") && m_profile.number("collisionPolicy") == 0)
         m_profile.values["collisionPolicy"] = 4;
 }
@@ -542,6 +768,7 @@ void MainCoordinatorViewModel::restoreRun(int index) {
     const auto runs = m_store.history();
     if (index < 0 || index >= runs.size())
         return;
+    m_deleting = false;
     restore(QJsonObject::fromVariantMap(runs[index].toMap().value("payload").toMap()));
     emit profileChanged();
     changed();

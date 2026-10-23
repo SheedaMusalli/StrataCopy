@@ -2,9 +2,32 @@ import QtQuick
 import QtQuick.Controls
 Dialog {
     id: dialog
+    property var enterAction: null
     modal: true
     anchors.centerIn: parent
     padding: 18
+    function confirmFromEnter() {
+        if (!opened || !activeFocus)
+            return
+        if (enterAction) {
+            enterAction()
+            return
+        }
+        if (standardButtons & (Dialog.Ok | Dialog.Yes | Dialog.Save | Dialog.Open | Dialog.Apply | Dialog.Retry | Dialog.Close))
+            accept()
+    }
+    Shortcut {
+        sequence: "Return"
+        context: Qt.WindowShortcut
+        enabled: dialog.opened && dialog.activeFocus
+        onActivated: dialog.confirmFromEnter()
+    }
+    Shortcut {
+        sequence: "Enter"
+        context: Qt.WindowShortcut
+        enabled: dialog.opened && dialog.activeFocus
+        onActivated: dialog.confirmFromEnter()
+    }
     background: Rectangle {color: "#191d25";radius: 10;border.color: "#3a424f"}
     header: Text {
         text: dialog.title

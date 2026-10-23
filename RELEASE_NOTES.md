@@ -1,25 +1,15 @@
-## StrataCopy v1.0.0
+## StrataCopy v1.1.0
 
-The first official release of StrataCopy: a compact Windows x64 copy utility built with C++20 and Qt, powered by the system Robocopy engine.
+This update adds hardware-aware performance settings and a more configurable Windows copy experience.
 
-### Included
+- Auto checks CPU, RAM and both transfer drives; separate thread dropdowns cover NVMe, SATA/other SSDs, HDDs, USB/removable, network and unknown storage. Custom limits persist and Explorer transfers retain them.
+- Steam-style completion notifications show elapsed time with slide-up and slide-down animations. Notifications and animation can be disabled in Settings or during installation.
+- The expanded installer offers tray-only operation, compact/detailed defaults, pinning, completion behavior, notification choices and performance profiles. The task-page footer layout now fits above the navigation bar.
+- Tray-only mode keeps the app available without an idle copy window. Successful Explorer transfers clear source and destination. Additional dropped files queue for the same destination.
+- Existing-file prompts support Do this for all conflicts for the current transfer.
 
-- Compact dark copy window with expandable activity, speed graph, pause/resume and cancellation. Closes after a successful transfer by default; choose Keep open in Details to change it.
-- Per-file conflict prompts with **Replace Existing File**, **Skip This File**, and **Make Duplicate**, including nested folder conflicts. Duplicate names are numbered without replacing the original.
-- Optional Explorer handling for keyboard Paste, native Paste menus and filesystem drag-and-drop. Switch back to the Windows copier with the checkbox in Settings.
-- Copy, move and mirror profiles; threading, retries, filters and existing-file policies; saved presets and command/script export.
-- Optional XXH3-64, BLAKE3 or SHA-256 readback verification, durable queue recovery, transfer history and complete logs.
-- Original StrataCopy icon and modern per-user installer.
-- **Check for Updates** compares against GitHub's latest stable version. It confirms when already current and opens Releases only when an update is available.
+Download **StrataCopy-1.1.0-Setup-x64.exe**. All **40 engine/native checks passed**, with zero failures or skips. Installer checks cover preferences, upgrades, registrations and uninstall cleanup.
 
-### Downloads
+Auto uses conservative heuristics rather than throughput benchmarks. Unsupported Explorer operations use Windows. Copy cancellation does not roll back completed files.
 
-Download **StrataCopy-1.0.0-Setup-x64.exe** below. The source and build instructions are in the public repository. GitHub displays the installer's SHA-256 digest beside the download.
-
-### Validation and limits
-
-All **34 engine/native checks passed with zero failures or skips**, including real transfers, all conflict choices, update-check errors/timeouts, the app-to-Robocopy handoff and resource-growth checks. Installer validation covers install, upgrade, optional integration and uninstall cleanup.
-
-Explorer integration handles normal filesystem operations; unsupported or virtual operations use Windows. Intercepted transfers do not create Explorer Undo entries. Failed duplicate publication retains staged data and reports its recovery path. Progress and ETA are estimates; cancellation does not undo completed copies.
-
-See the README for setup, integration details and build instructions.
+Explorer Delete, context-menu Delete and Shift+Delete now route into StrataCopy with recycle/permanent intent preserved, explicit confirmation, progress, cancellation and completion timing. Recycling uses Windows Shell behavior; deletion speed is not guaranteed to exceed Explorer.

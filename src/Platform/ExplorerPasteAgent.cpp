@@ -104,7 +104,7 @@ int main(int argc, char **argv) {
     const auto arguments = app.arguments();
     if (arguments.contains("--stop")) {
         strata::UniqueHandle event(
-            OpenEventW(EVENT_MODIFY_STATE, FALSE, L"Local\\StrataCopy.NativeCopy.Enabled.4"));
+            OpenEventW(EVENT_MODIFY_STATE, FALSE, L"Local\\StrataCopy.NativeCopy.Enabled.5"));
         if (event)
             ResetEvent(event.get());
         if (auto window = FindWindowExW(HWND_MESSAGE, nullptr, windowClass, nullptr)) {
@@ -150,7 +150,7 @@ int main(int argc, char **argv) {
         if (GetLastError() != ERROR_ALREADY_EXISTS)
             break;
         instance.reset();
-        strata::UniqueHandle live(OpenEventW(SYNCHRONIZE, FALSE, L"Local\\StrataCopy.NativeCopy.Enabled.4"));
+        strata::UniqueHandle live(OpenEventW(SYNCHRONIZE, FALSE, L"Local\\StrataCopy.NativeCopy.Enabled.5"));
         if (live && WaitForSingleObject(live.get(), 0) == WAIT_OBJECT_0)
             return 0;
         if (auto previous = FindWindowExW(HWND_MESSAGE, nullptr, windowClass, nullptr))

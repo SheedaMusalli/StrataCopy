@@ -224,6 +224,35 @@ class NativeHookTests : public QObject {
         QVERIFY(QFile::remove(target));
         QCOMPARE(pendingObjects(), size_t(0));
     }
+    void deleteRoutesPreserveIntent() {
+        Com<IFileOperation> operation;
+        QVERIFY(SUCCEEDED(CoCreateInstance(CLSID_FileOperation,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&operation.p))));
+        Com<IShellItem> from;QVERIFY(item(source,&from.p));
+        operation->SetOperationFlags(FOF_ALLOWUNDO|FOFX_RECYCLEONDELETE);
+        received={};
+        QVERIFY(SUCCEEDED(operation->DeleteItem(from.p,nullptr)));
+        QVERIFY(SUCCEEDED(operation->PerformOperations()));
+        QCOMPARE(received.value("operation").toString(),"recycle");
+        QVERIFY(QFileInfo::exists(source));
+        Com<IShellItemArray> items;
+        QVERIFY(SUCCEEDED(SHCreateShellItemArrayFromShellItem(from.p,IID_PPV_ARGS(&items.p))));
+        operation->SetOperationFlags(FOF_SILENT|FOF_NOCONFIRMATION|FOF_NOERRORUI);
+        received={};
+        QVERIFY(SUCCEEDED(operation->DeleteItems(items.p)));
+        QVERIFY(SUCCEEDED(operation->PerformOperations()));
+        QCOMPARE(received.value("operation").toString(),"delete");
+        QVERIFY(QFileInfo::exists(source));
+        QCOMPARE(pendingObjects(),size_t(0));
+        QTemporaryDir fixture;
+        const auto doomed=fixture.filePath("delete-fallback.txt");
+        {QFile f(doomed);QVERIFY(f.open(QIODevice::WriteOnly));QVERIFY(f.write("own fixture")>0);}
+        Com<IShellItem> fallbackItem;QVERIFY(item(doomed,&fallbackItem.p));
+        accepting=false;const auto restoreAcceptance=qScopeGuard([]{accepting=true;});
+        operation->SetOperationFlags(FOF_SILENT|FOF_NOCONFIRMATION|FOF_NOERRORUI);
+        QVERIFY(SUCCEEDED(operation->DeleteItem(fallbackItem.p,nullptr)));
+        QVERIFY(SUCCEEDED(operation->PerformOperations()));
+        QVERIFY(!QFileInfo::exists(doomed));
+    }
     void mixedBatchStaysNative() {
         Com<IFileOperation> operation;
         QVERIFY(SUCCEEDED(CoCreateInstance(CLSID_FileOperation, nullptr, CLSCTX_INPROC_SERVER,
@@ -318,7 +347,7 @@ class NativeHookTests : public QObject {
     }
     void realHandoffRunsRobocopy() {
         // No hooks are installed in Explorer. Only this test process is intercepted.
-        HANDLE event = CreateEventW(nullptr, TRUE, FALSE, L"Local\\StrataCopy.NativeCopy.Enabled.4");
+        HANDLE event = CreateEventW(nullptr, TRUE, FALSE, L"Local\\StrataCopy.NativeCopy.Enabled.5");
         QVERIFY(event);
         bool existing = GetLastError() == ERROR_ALREADY_EXISTS;
         auto closeEvent = qScopeGuard([&] {

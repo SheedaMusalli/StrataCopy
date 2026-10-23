@@ -2,15 +2,22 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import QtCore
 ApplicationWindow {
     id: root
-    width: 640; height: 450
-    minimumWidth: 600; minimumHeight: detailsExpanded ? 650 : 450
-    visible: true; title: "StrataCopy"; color: "#12161d"
+    width: 640; height: 510
+    minimumWidth: 600; minimumHeight: detailsExpanded ? 650 : 510
+    visible: !transferOnly; title: "StrataCopy"; color: "#12161d"
     flags: Qt.Window | Qt.FramelessWindowHint | (pinned ? Qt.WindowStaysOnTopHint : 0)
-    property bool detailsExpanded: false
-    property bool pinned: false
+    property bool detailsExpanded: uiPreferences.detailed
+    Settings {id: uiPreferences;category: "Interface";property bool detailed: false;property bool pinned: false;property int afterCopy: 1;property bool transferOnly: false;property bool completionNotifications: true;property bool notificationAnimations: true}
+    property bool pinned: uiPreferences.pinned
+    property alias completionNotifications: uiPreferences.completionNotifications
+    property alias notificationAnimations: uiPreferences.notificationAnimations
+    property alias transferOnly: uiPreferences.transferOnly
     property bool allowClose: false
+    property bool permanentDeletion: false
+    property var deletionPaths: []
     property string confirmationText: ""
     property string updateMessage: ""
     property var currentConflict: ({})
@@ -19,8 +26,8 @@ ApplicationWindow {
     palette.window: "#191d25"; palette.windowText: "#d5dce8"; palette.base: "#141922"
     palette.text: "#d5dce8"; palette.button: "#252c37"; palette.buttonText: "#d5dce8"
     palette.highlight: "#2c4160"; palette.highlightedText: "#f0f5ff"
-    onDetailsExpandedChanged: height=detailsExpanded ? 670 : 450
-    onClosing: function(event) {if(appState.busy&&!allowClose){event.accepted=false;closeDialog.open()}}
+    onDetailsExpandedChanged: height=detailsExpanded ? 670 : 510
+    onClosing: function(event) {if(appState.busy&&!allowClose){event.accepted=false;closeDialog.open()}else if(root.transferOnly){event.accepted=false;root.hide()}}
     function setUiTestState(mode) {
         parameters.close();runHistory.close()
         detailsExpanded=mode==="details"
@@ -48,6 +55,8 @@ ApplicationWindow {
             objectName: "copyView"
             Layout.fillWidth: true;Layout.fillHeight: true
             detailsExpanded: root.detailsExpanded
+            completionDefault: uiPreferences.afterCopy
+            transferOnly: root.transferOnly
             onToggleDetails: root.detailsExpanded=!root.detailsExpanded
             onAddFiles: sourceFiles.open()
             onAddFolder: sourceFolder.open()
@@ -58,11 +67,11 @@ ApplicationWindow {
         }
     }
     DropArea {
-        anchors.fill: parent;enabled: !appState.busy
+        anchors.fill: parent
         onDropped: function(drop){if(drop.hasUrls){appState.addSources(drop.urls);drop.acceptProposedAction()}}
-        Rectangle {anchors.fill: parent;visible: parent.containsDrag;color: "#e619273b";border.color: "#7bb4ff";border.width: 2;radius: 10;Text {anchors.centerIn: parent;text: "Drop to add files";font.pixelSize: 20;color: "#c3dcff"}}
+        Rectangle {anchors.fill: parent;visible: parent.containsDrag;color: "#e619273b";border.color: "#7bb4ff";border.width: 2;radius: 10;Text {anchors.centerIn: parent;text: appState.busy ? "Drop to queue the next transfer" : "Drop to add files";font.pixelSize: 20;color: "#c3dcff"}}
     }
-    ParameterMatrixDrawer {id: parameters;onMoveWindowRequested: root.startSystemMove()}
+    ParameterMatrixDrawer {id: parameters;preferences: uiPreferences;onMoveWindowRequested: root.startSystemMove()}
     FileDialog {id: sourceFiles;title: "Add source files";fileMode: FileDialog.OpenFiles;onAccepted: appState.addSources(selectedFiles)}
     FolderDialog {id: sourceFolder;title: "Add source folder";onAccepted: appState.addSources([selectedFolder])}
     FolderDialog {id: destinationFolder;title: "Choose destination";onAccepted: appState.destination=appState.pathFromUrl(selectedFolder)}
@@ -79,9 +88,27 @@ ApplicationWindow {
         onRejected: appState.rejectExplorerRequest()
     }
     ModernDialog {
+        id: deletionDialog;title: root.permanentDeletion ? "Permanently delete these items?" : "Move these items to the Recycle Bin?"
+        width: Math.min(410,root.width-36);height: Math.min(300,root.height-36);padding: 12;standardButtons: Dialog.Cancel
+        enterAction: function() {deletionDialog.accept()}
+        contentItem: ColumnLayout {
+            spacing: 8
+            Text {text: root.deletionPaths.length+" selected item(s)";color: "#e6edf5";font.pixelSize: 15}
+            Text {text: root.permanentDeletion ? "Permanent deletion cannot be undone." : "Windows may ask if recycling is unavailable.";Layout.fillWidth: true;wrapMode: Text.WordWrap;color: "#b5c3d5";font.pixelSize: 12}
+            ScrollView {
+                Layout.fillWidth: true;Layout.preferredHeight: 72;Layout.minimumHeight: 56;Layout.maximumHeight: 72;contentWidth: availableWidth;clip: true
+                ScrollBar.vertical: SlimScrollBar {}
+                TextArea {text: root.deletionPaths.slice(0,8).join("\n")+(root.deletionPaths.length>8 ? "\n…" : "");readOnly: true;selectByMouse: true;wrapMode: TextEdit.WrapAnywhere;color: "#95a9be";font.pixelSize: 11;background: null}
+            }
+            GlassButton {text: root.permanentDeletion ? "Delete permanently" : "Move to Recycle Bin";danger: root.permanentDeletion;accent: !root.permanentDeletion;onClicked: deletionDialog.accept()}
+        }
+        onAccepted: appState.confirmDeletion()
+        onRejected: {appState.rejectExplorerRequest();if(root.transferOnly)root.hide()}
+    }
+    ModernDialog {
         id: closeDialog;title: "Cancel this transfer?";width: 390;standardButtons: Dialog.Yes | Dialog.No
-        contentItem: Text {text: "Completed files will remain at the destination.";color: "#abb9cc";wrapMode: Text.WordWrap;font.pixelSize: 12}
-        onAccepted: {appState.cancel();root.allowClose=true;root.close()}
+        contentItem: Text {text: appState.deleting ? "Items already removed are not restored by cancellation." : "Completed files will remain at the destination.";color: "#abb9cc";wrapMode: Text.WordWrap;font.pixelSize: 12}
+        onAccepted: {appState.cancel();if(appState.deleting)root.hide();else {root.allowClose=true;root.close()}}
     }
     ModernDialog {
         id: completionDialog;title: root.pendingCompletion===2 ? "Put the PC to sleep?" : "Eject the drive?";width: 400;standardButtons: Dialog.Yes | Dialog.No
@@ -122,17 +149,19 @@ ApplicationWindow {
     ModernDialog {
         id: fileConflictDialog;title: "File already exists";width: root.width-36
         standardButtons: Dialog.Cancel
+        enterAction: function() {appState.resolveFileConflict(root.currentConflict.token,0,allConflicts.checked);fileConflictDialog.close()}
         contentItem: ColumnLayout {
             spacing: 12
             Text {text: root.currentConflict.name || "";color: "#edf2fa";font.pixelSize: 16;font.weight: Font.DemiBold;Layout.fillWidth: true;elide: Text.ElideMiddle}
             Text {text: "Choose what to do with this file.";color: "#9babbe";font.pixelSize: 12}
             Text {text: "Incoming: " + (root.currentConflict.source || "") + "\n" + (root.currentConflict.sourceSize || "") + " · " + (root.currentConflict.sourceDate || "");color: "#bfcddd";font.pixelSize: 11;wrapMode: Text.WrapAnywhere;Layout.fillWidth: true}
             Text {text: "Existing: " + (root.currentConflict.destination || "") + "\n" + (root.currentConflict.destinationSize || "") + " · " + (root.currentConflict.destinationDate || "");color: "#bfcddd";font.pixelSize: 11;wrapMode: Text.WrapAnywhere;Layout.fillWidth: true}
+            LiquidCheckBox {id: allConflicts;text: "Do this for all conflicts"}
             RowLayout {
                 Layout.fillWidth: true;spacing: 8
-                GlassButton {text: "Replace Existing File";accent: true;Layout.fillWidth: true;onClicked: {appState.resolveFileConflict(root.currentConflict.token,0);fileConflictDialog.close()}}
-                GlassButton {text: "Skip This File";Layout.fillWidth: true;onClicked: {appState.resolveFileConflict(root.currentConflict.token,1);fileConflictDialog.close()}}
-                GlassButton {text: "Make Duplicate";Layout.fillWidth: true;onClicked: {appState.resolveFileConflict(root.currentConflict.token,2);fileConflictDialog.close()}}
+                GlassButton {text: "Replace Existing File";accent: true;Layout.fillWidth: true;onClicked: {appState.resolveFileConflict(root.currentConflict.token,0,allConflicts.checked);fileConflictDialog.close()}}
+                GlassButton {text: "Skip This File";Layout.fillWidth: true;onClicked: {appState.resolveFileConflict(root.currentConflict.token,1,allConflicts.checked);fileConflictDialog.close()}}
+                GlassButton {text: "Make Duplicate";Layout.fillWidth: true;onClicked: {appState.resolveFileConflict(root.currentConflict.token,2,allConflicts.checked);fileConflictDialog.close()}}
             }
         }
         onRejected: appState.resolveFileConflict(root.currentConflict.token,3)
@@ -141,11 +170,12 @@ ApplicationWindow {
     Connections {
         target: appState
         function onUpdateCheckFinished(message){root.updateMessage=message;updateDialog.open()}
-        function onFileConflictRequired(conflict){root.currentConflict=conflict;fileConflictDialog.open()}
+        function onDeletionConfirmationRequired(permanent,paths){root.permanentDeletion=permanent;root.deletionPaths=paths;root.showNormal();root.raise();root.requestActivate();deletionDialog.open()}
+        function onFileConflictRequired(conflict){root.currentConflict=conflict;allConflicts.checked=false;fileConflictDialog.open()}
         function onDestructiveConfirmationRequired(message){root.confirmationText=message;destructiveDialog.open()}
         function onCloseRequested(){root.close()}
         function onPreviewReady(){root.detailsExpanded=true}
-        function onCompletedSuccessfully(){if(copyView.completionChoice===1)appState.completionAction(1);else if(copyView.completionChoice>1){root.pendingCompletion=copyView.completionChoice;completionDialog.open()}}
+        function onCompletedSuccessfully(){if(root.transferOnly)root.hide();else if(copyView.completionChoice===1)appState.completionAction(1);else if(copyView.completionChoice>1 && !appState.deleting){root.pendingCompletion=copyView.completionChoice;completionDialog.open()}}
     }
     MouseArea {anchors.right: parent.right;anchors.bottom: parent.bottom;width: 9;height: 9;cursorShape: Qt.SizeFDiagCursor;onPressed: root.startSystemResize(Qt.RightEdge|Qt.BottomEdge)}
 }

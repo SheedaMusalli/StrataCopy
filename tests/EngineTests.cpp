@@ -1,4 +1,6 @@
 #include "Core/MultiSourceBatcher.hpp"
+#include "Core/DeletionSupervisor.hpp"
+#include "Platform/DriveHardwareDetector.hpp"
 #include "Core/RobocopyCommandCompiler.hpp"
 #include "Core/RobocopyProcessSupervisor.hpp"
 #include "Core/RobocopyProfile.hpp"
@@ -15,6 +17,7 @@
 #include <QJsonDocument>
 #include <QProcess>
 #include <QSignalSpy>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -58,14 +61,157 @@ class EngineTests : public QObject {
         QVERIFY(p.validate().isEmpty());
         auto args = RobocopyCommandCompiler::arguments({"C:/source", "D:/dest", {}, false}, p);
         for (const auto &flag :
-             {"/E", "/MT:128", "/J", "/COPY:DAT", "/DCOPY:DAT", "/XJ", "/FFT", "/R:2", "/W:2", "/UNICODE"})
+             {"/E", "/MT:8", "/COPY:DAT", "/DCOPY:DAT", "/XJ", "/FFT", "/R:2", "/W:2", "/UNICODE"})
             QVERIFY2(args.contains(flag), flag);
         p.values["enableBandwidthLimit"] = true;
         args = RobocopyCommandCompiler::arguments({"C:/s", "D:/d", {}, false}, p);
         QVERIFY(args.contains("/IPG:10"));
-        QVERIFY(!args.contains("/MT:128"));
+        QVERIFY(!args.contains("/MT:8"));
         p.values["threadCount"] = 129;
         QVERIFY(!p.validate().isEmpty());
+    }
+    void adaptiveHardwareProfiles() {
+        QTemporaryDir isolated;
+        const auto old = qgetenv("STRATACOPY_DATA_DIR");
+        qputenv("STRATACOPY_DATA_DIR", isolated.path().toUtf8());
+        const auto guard = qScopeGuard([&] {if(old.isNull()) qunsetenv("STRATACOPY_DATA_DIR"); else qputenv("STRATACOPY_DATA_DIR", old);});
+        const quint64 ram = 32ULL * 1024 * 1024 * 1024;
+        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Nvme, 16, ram), 32);
+        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Nvme, 64, ram), 32);
+        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Ssd, 32, ram), 8);
+        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Mechanical, 32, ram), 4);
+        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Removable, 32, ram), 4);
+        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Unknown, 32, ram), 4);
+        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Nvme, 1, ram), 2);
+        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Nvme, 16, 4ULL*1024*1024*1024), 4);
+        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Nvme, 16, 0), 4);
+        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Nvme, 16, 8ULL*1024*1024*1024), 8);
+        QCOMPARE(DriveHardwareDetector::tier("\\\\server\\share"), StorageTier::Network);
+        const QVariantMap overrides{{"nvmeThreads",64},{"hddThreads",2},{"ssdThreads",16},{"usbThreads",1},{"networkThreads",12},{"unknownThreads",8}};
+        QCOMPARE(DriveHardwareDetector::storageThreadLimit(StorageTier::Nvme,16,ram,overrides),64);
+        QCOMPARE(DriveHardwareDetector::storageThreadLimit(StorageTier::Mechanical,16,ram,overrides),2);
+        QCOMPARE(DriveHardwareDetector::storageThreadLimit(StorageTier::Ssd,16,ram,overrides),16);
+        QCOMPARE(DriveHardwareDetector::storageThreadLimit(StorageTier::Removable,16,ram,overrides),1);
+        QCOMPARE(DriveHardwareDetector::storageThreadLimit(StorageTier::Network,16,ram,overrides),12);
+        QCOMPARE(DriveHardwareDetector::storageThreadLimit(StorageTier::Unknown,16,ram,overrides),8);
+        QCOMPARE(DriveHardwareDetector::storageThreadLimit(StorageTier::Nvme,16,ram,{{"nvmeThreads",0}}),32);
+        QCOMPARE(RobocopyProfile::preset(4).number("threadCount"), 4);
+        QCOMPARE(RobocopyProfile::preset(5).number("retryCount"), 0);
+        const auto extreme = RobocopyCommandCompiler::arguments({"C:/s", "D:/d", {}, false}, RobocopyProfile::preset(5));
+        QVERIFY(extreme.contains("/MT:32")); QVERIFY(extreme.contains("/R:0")); QVERIFY(extreme.contains("/W:0"));
+        MainCoordinatorViewModel coordinator;
+        QCOMPARE(coordinator.profile().value("performanceMode").toInt(), 0);
+        coordinator.setOption("threadCount", 17);
+        QCOMPARE(coordinator.profile().value("performanceMode").toInt(), 3);
+        coordinator.setOption("performanceMode", 0);
+        QCOMPARE(coordinator.profile().value("performanceMode").toInt(), 0);
+        coordinator.setOption("nvmeThreads", 48);
+        coordinator.setOption("hddThreads", 2);
+        QCOMPARE(coordinator.profile().value("performanceMode").toInt(), 0);
+        QCOMPARE(coordinator.profile().value("nvmeThreads").toInt(), 48);
+        QTemporaryDir temp;
+        const auto before = handles();
+        for (int i=0;i<100;++i) DriveHardwareDetector::tier(temp.path());
+        QVERIFY(handles() <= before + 2);
+        QVERIFY(DriveHardwareDetector::saveInventory(temp.path()));
+        const auto inventory = QJsonDocument::fromJson(read(temp.filePath("hardware.json"))).object();
+        QVERIFY(inventory.value("logicalProcessors").toInt() > 0);
+    }
+    void installationPerformanceChoice() {
+        const auto oldOrganization = QCoreApplication::organizationName();
+        QCoreApplication::setOrganizationName("StrataCopyInstallerTests");
+        const auto organizationGuard = qScopeGuard([&] {QCoreApplication::setOrganizationName(oldOrganization);});
+        QTemporaryDir temp;
+        const auto old = qgetenv("STRATACOPY_DATA_DIR");
+        qputenv("STRATACOPY_DATA_DIR", temp.path().toUtf8());
+        QSettings preferences;
+        const auto previous = preferences.value("Installer/performanceProfile");
+        const auto guard = qScopeGuard([&] {
+            if(old.isNull()) qunsetenv("STRATACOPY_DATA_DIR"); else qputenv("STRATACOPY_DATA_DIR",old);
+            if(previous.isValid()) preferences.setValue("Installer/performanceProfile",previous);
+            else preferences.remove("Installer/performanceProfile");
+        });
+        preferences.setValue("Installer/performanceProfile", 2);
+        preferences.sync();
+        QCOMPARE(preferences.status(), QSettings::NoError);
+        {
+            MainCoordinatorViewModel coordinator;
+            QCOMPARE(coordinator.profile().value("performanceMode").toInt(), 2);
+            QCOMPARE(coordinator.profile().value("threadCount").toInt(), 32);
+            QCOMPARE(coordinator.profile().value("retryCount").toInt(), 0);
+            QVERIFY(!preferences.contains("Installer/performanceProfile"));
+        }
+        preferences.setValue("Installer/performanceProfile", 0);
+        preferences.sync();
+        {
+            MainCoordinatorViewModel coordinator;
+            QCOMPARE(coordinator.profile().value("performanceMode").toInt(), 0);
+            QCOMPARE(coordinator.profile().value("retryCount").toInt(), 2);
+            QVERIFY(!preferences.contains("Installer/performanceProfile"));
+        }
+    }
+    void deletionWorkerLifecycle() {
+        QTemporaryDir temp;
+        DeletionSupervisor deletion;
+        QSignalSpy done(&deletion,&DeletionSupervisor::finished);
+        QVERIFY(!deletion.start({QDir::rootPath()},true));
+        QVERIFY(!deletion.start({"//server/share"},true));
+        QVERIFY(!deletion.start({temp.filePath("missing")},true));
+        QVERIFY(put(temp.filePath("tree/nested/日本語.txt"),"fixture"));
+        QVERIFY(put(temp.filePath("outside/preserve.txt"),"must survive"));
+        QCOMPARE(QProcess::execute("cmd.exe",{"/c","mklink","/J",QDir::toNativeSeparators(temp.filePath("tree/junction")),QDir::toNativeSeparators(temp.filePath("outside"))}),0);
+        QVERIFY(deletion.start({temp.filePath("tree")},true));
+        QVERIFY(done.wait(10000));
+        QVERIFY(done.last()[0].toBool());
+        QVERIFY(!QFileInfo::exists(temp.filePath("tree")));
+        QCOMPARE(read(temp.filePath("outside/preserve.txt")),QByteArray("must survive"));
+        QVERIFY(put(temp.filePath("recycle-fixture.txt"),"own recycle fixture"));
+        done.clear();
+        QVERIFY(deletion.start({temp.filePath("recycle-fixture.txt")},false));
+        QVERIFY(done.wait(10000));
+        QVERIFY(done.last()[0].toBool());
+        QVERIFY(!QFileInfo::exists(temp.filePath("recycle-fixture.txt")));
+        const auto before=handles();
+        for(int i=0;i<20;++i) {
+            QVERIFY(put(temp.filePath("repeat.txt"),"own fixture"));done.clear();
+            QVERIFY(deletion.start({temp.filePath("repeat.txt")},true));
+            QVERIFY(done.wait(10000));QVERIFY(done.last()[0].toBool());
+        }
+        deletion.stopAndWait();
+        QVERIFY(handles()<=before+8);
+        QStringList cancelItems;
+        for(int i=0;i<300;++i){const auto path=temp.filePath(QString("cancel/%1.txt").arg(i));QVERIFY(put(path,"own cancellation fixture"));cancelItems<<path;}
+        done.clear();QVERIFY(deletion.start(cancelItems,true));deletion.cancel();
+        QVERIFY(done.wait(10000));QVERIFY(done.last()[1].toBool());
+        deletion.stopAndWait();
+    }
+    void deletionRequestNeedsConfirmation() {
+        QTemporaryDir temp;
+        const auto old=qgetenv("STRATACOPY_DATA_DIR");
+        qputenv("STRATACOPY_DATA_DIR",temp.filePath("state").toUtf8());
+        const auto guard=qScopeGuard([&]{if(old.isNull())qunsetenv("STRATACOPY_DATA_DIR");else qputenv("STRATACOPY_DATA_DIR",old);});
+        const auto source=temp.filePath("delete-me.txt");
+        const auto request=temp.filePath("state/ExplorerRequests/delete.json");
+        QVERIFY(put(source,"own fixture"));
+        QJsonObject payload{{"operation","delete"},{"sources",QJsonArray{source}}};
+        QVERIFY(put(request,QJsonDocument(payload).toJson()));
+        MainCoordinatorViewModel coordinator;
+        QSignalSpy confirm(&coordinator,&MainCoordinatorViewModel::deletionConfirmationRequired);
+        QSignalSpy complete(&coordinator,&MainCoordinatorViewModel::completedSuccessfully);
+        QVERIFY(coordinator.importExplorerRequest(request));
+        QCOMPARE(confirm.size(),1);QVERIFY(confirm.last()[0].toBool());
+        QVERIFY(!coordinator.busy());QVERIFY(QFileInfo::exists(source));
+        const auto unrelated=temp.filePath("unrelated.txt");QVERIFY(put(unrelated,"must survive"));
+        coordinator.addPaths({unrelated});QCOMPARE(coordinator.sources().size(),1);
+        coordinator.rejectExplorerRequest();QVERIFY(QFileInfo::exists(source));
+        QVERIFY(put(request,QJsonDocument(payload).toJson()));
+        QVERIFY(coordinator.importExplorerRequest(request));
+        coordinator.confirmDeletion();
+        QVERIFY(complete.wait(10000));
+        QVERIFY(!QFileInfo::exists(source));
+        QVERIFY(coordinator.sources().isEmpty());
+        QVERIFY(QFileInfo::exists(unrelated));
+        coordinator.addPaths({unrelated});QVERIFY(!coordinator.deleting());
     }
     void collisionAndPermissions() {
         RobocopyProfile p;
@@ -350,20 +496,26 @@ class EngineTests : public QObject {
         coordinator.setOption("hashAlgorithm", 1);
         QVERIFY(coordinator.validation().isEmpty());
         QSignalSpy complete(&coordinator, &MainCoordinatorViewModel::completedSuccessfully);
+        QSignalSpy notification(&coordinator, &MainCoordinatorViewModel::transferSucceeded);
         QVERIFY(coordinator.start());
         QVERIFY(complete.wait(10000));
         QVERIFY(!coordinator.busy());
+        QCOMPARE(notification.size(), 1);
+        QVERIFY(notification.first().first().toLongLong() >= 0);
         QCOMPARE(coordinator.outcome(), "success");
         QCOMPARE(coordinator.progress(), 1.0);
         QCOMPARE(read(temp.filePath("target/source/one.txt")), QByteArray("verified payload"));
         QVERIFY(coordinator.fileStats()->counters().value("Verified").toInt() > 0);
         coordinator.savePreset("My settings");
         QCOMPARE(coordinator.savedPresets().size(), 1);
+        QVERIFY(coordinator.sources().isEmpty());
+        coordinator.addPaths({temp.filePath("source")});
         coordinator.exportScript(QUrl::fromLocalFile(temp.filePath("transfer.bat")));
         QVERIFY(read(temp.filePath("transfer.bat")).contains("chcp 65001"));
         coordinator.exportScript(QUrl::fromLocalFile(temp.filePath("transfer.ps1")));
         QVERIFY(read(temp.filePath("transfer.ps1")).contains("$LASTEXITCODE -ge 8"));
         QVERIFY(put(temp.filePath("target/source/extra.txt"), "temporary test extra"));
+        coordinator.addPaths({temp.filePath("source")});
         coordinator.setOption("transferMode", 5);
         QSignalSpy confirmation(&coordinator, &MainCoordinatorViewModel::destructiveConfirmationRequired);
         QVERIFY(!coordinator.start());
@@ -375,11 +527,13 @@ class EngineTests : public QObject {
         QVERIFY(complete.wait(10000));
         QVERIFY(!QFileInfo::exists(temp.filePath("target/source/extra.txt")));
         coordinator.setOption("verifyHashPostCopy", false);
+        coordinator.addPaths({temp.filePath("source")});
         coordinator.setOption("transferMode", 3);
         QVERIFY(put(temp.filePath("source/move-only.txt"), "new move payload"));
         complete.clear();
-        QVERIFY(coordinator.start(false, true));
+        QVERIFY(coordinator.start());
         QVERIFY(complete.wait(10000));
+        QCOMPARE(coordinator.profile().value("transferMode").toInt(), 0);
         QVERIFY(!QFileInfo::exists(temp.filePath("source/move-only.txt")));
         QCOMPARE(read(temp.filePath("target/source/move-only.txt")), QByteArray("new move payload"));
         QVERIFY(QFileInfo::exists(temp.filePath("target/source/one.txt")));
@@ -416,10 +570,16 @@ class EngineTests : public QObject {
                             {"operation", "copy"}};
         QVERIFY(put(request, QJsonDocument(payload).toJson()));
         MainCoordinatorViewModel coordinator;
+        coordinator.setOption("hddThreads", 2);
+        coordinator.setOption("threadCount", 6);
         QSignalSpy complete(&coordinator, &MainCoordinatorViewModel::completedSuccessfully);
         QVERIFY(coordinator.importExplorerRequest(request));
         QVERIFY(complete.wait(10000));
         QCOMPARE(read(temp.filePath("target/a.txt")), QByteArray("Explorer paste"));
+        QVERIFY(coordinator.destination().isEmpty());
+        QCOMPARE(coordinator.profile().value("performanceMode").toInt(), 3);
+        QCOMPARE(coordinator.profile().value("threadCount").toInt(), 6);
+        QCOMPARE(coordinator.profile().value("hddThreads").toInt(), 2);
         QVERIFY(!QFileInfo::exists(request));
         const auto external = temp.filePath("outside.json");
         QVERIFY(put(external, QJsonDocument(payload).toJson()));
@@ -431,22 +591,51 @@ class EngineTests : public QObject {
         payload["operation"] = "move";
         QVERIFY(put(request, QJsonDocument(payload).toJson()));
         QSignalSpy confirmation(&coordinator, &MainCoordinatorViewModel::destructiveConfirmationRequired);
-        QVERIFY(!coordinator.importExplorerRequest(request));
-        QCOMPARE(confirmation.size(), 1);
-        QVERIFY(QFileInfo::exists(temp.filePath("source/a.txt")));
-        QVERIFY(QFileInfo::exists(request)); // Confirmation has not accepted the durable request.
-        const auto later = temp.filePath("state/ExplorerRequests/later.json");
-        payload["operation"] = "copy";
-        QDir().mkpath(temp.filePath("later-target"));
-        payload["destination"] = temp.filePath("later-target");
-        QVERIFY(put(later, QJsonDocument(payload).toJson()));
-        QVERIFY(!coordinator.importExplorerRequest(later));
-        QVERIFY(QFileInfo::exists(later));
-        coordinator.rejectExplorerRequest();
+        QSignalSpy conflicts(&coordinator, &MainCoordinatorViewModel::fileConflictRequired);
+        connect(&coordinator, &MainCoordinatorViewModel::fileConflictRequired, &coordinator,
+                [&](const QVariantMap &conflict) { coordinator.resolveFileConflict(conflict.value("token").toULongLong(), 0, true); });
+        complete.clear();
+        QVERIFY(coordinator.importExplorerRequest(request));
+        QCOMPARE(confirmation.size(), 0);
+        // New sources dropped while busy are durably queued, without changing this run.
+        QVERIFY(put(temp.filePath("extra/b.txt"), "queued drop"));
+        coordinator.addPaths({temp.filePath("extra/b.txt")});
+        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(temp.filePath("target/b.txt")), 20000);
+        QTRY_VERIFY_WITH_TIMEOUT(!coordinator.busy(), 10000);
+        QCOMPARE(read(temp.filePath("target/b.txt")), QByteArray("queued drop"));
+        QVERIFY(!QFileInfo::exists(temp.filePath("extra/b.txt")));
+        QCOMPARE(coordinator.profile().value("transferMode").toInt(), 0);
         QVERIFY(!QFileInfo::exists(request));
-        QVERIFY(complete.wait(10000)); // The periodic importer picks up the next request.
-        QCOMPARE(read(temp.filePath("later-target/a.txt")), QByteArray("Explorer paste"));
-        QVERIFY(!QFileInfo::exists(later));
+    }
+    void conflictApplyAllIsPerTransfer() {
+        QTemporaryDir temp;
+        const auto old = qgetenv("STRATACOPY_DATA_DIR");
+        qputenv("STRATACOPY_DATA_DIR", temp.filePath("state").toUtf8());
+        const auto guard = qScopeGuard([&] { if(old.isNull()) qunsetenv("STRATACOPY_DATA_DIR"); else qputenv("STRATACOPY_DATA_DIR", old); });
+        MainCoordinatorViewModel coordinator;
+        for (const auto &name : {"a.txt", "b.txt", "c.txt"}) {
+            QVERIFY(put(temp.filePath(QString("source/") + name), "incoming"));
+            QVERIFY(put(temp.filePath(QString("target/source/") + name), "original"));
+        }
+        coordinator.addPaths({temp.filePath("source")});
+        coordinator.setDestination(temp.filePath("target"));
+        QSignalSpy conflicts(&coordinator, &MainCoordinatorViewModel::fileConflictRequired);
+        QSignalSpy complete(&coordinator, &MainCoordinatorViewModel::completedSuccessfully);
+        int choice = 1;
+        connect(&coordinator, &MainCoordinatorViewModel::fileConflictRequired, &coordinator,
+            [&](const QVariantMap &conflict) {coordinator.resolveFileConflict(conflict.value("token").toULongLong(), choice, true);});
+        QVERIFY(coordinator.start());
+        QVERIFY(complete.wait(10000));
+        QCOMPARE(conflicts.size(), 1);
+        QCOMPARE(read(temp.filePath("target/source/c.txt")), QByteArray("original"));
+        choice = 0;
+        QVERIFY(coordinator.sources().isEmpty());
+        coordinator.addPaths({temp.filePath("source")});
+        conflicts.clear();complete.clear();
+        QVERIFY(coordinator.start());
+        QVERIFY(complete.wait(10000));
+        QCOMPARE(conflicts.size(), 1);
+        QCOMPARE(read(temp.filePath("target/source/c.txt")), QByteArray("incoming"));
     }
     void fileConflictChoices() {
         QTemporaryDir temp;

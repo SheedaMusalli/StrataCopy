@@ -6,8 +6,11 @@ RobocopyProfile::RobocopyProfile() {
               {"collisionPolicy", 4},
               {"accessMode", 0},
               {"enableMultithreading", true},
-              {"threadCount", 128},
-              {"unbufferedIo", true},
+              {"threadCount", 8},
+              {"performanceMode", 0},
+              {"nvmeThreads", 0}, {"ssdThreads", 0}, {"hddThreads", 0},
+              {"usbThreads", 0}, {"networkThreads", 0}, {"unknownThreads", 0},
+              {"unbufferedIo", false},
               {"smbCompression", false},
               {"disableOffload", false},
               {"enableBandwidthLimit", false},
@@ -45,9 +48,11 @@ RobocopyProfile::RobocopyProfile() {
 QStringList RobocopyProfile::validate() const {
     QStringList errors;
     for (const auto &[key, maximum] : QList<QPair<QString, int>>{
-             {"transferMode", 5}, {"collisionPolicy", 4}, {"accessMode", 3}, {"hashAlgorithm", 2}})
+             {"transferMode", 5}, {"collisionPolicy", 4}, {"accessMode", 3}, {"hashAlgorithm", 2}, {"performanceMode", 3}})
         if (number(key) < 0 || number(key) > maximum)
             errors << "Invalid choice: " + key;
+    for (const auto &key : {"nvmeThreads", "ssdThreads", "hddThreads", "usbThreads", "networkThreads", "unknownThreads"})
+        if (number(key) < 0 || number(key) > 128) errors << "Storage thread limit must be Auto or 1–128.";
     if (number("threadCount") < 1 || number("threadCount") > 128)
         errors << "Thread count must be between 1 and 128.";
     if (number("retryCount") < 0 || number("retryWaitSeconds") < 0)
@@ -87,7 +92,7 @@ RobocopyProfile RobocopyProfile::preset(int index) {
     RobocopyProfile p;
     if (index == 1) {
         p.values["accessMode"] = 1;
-        p.values["threadCount"] = 64;
+        p.values["threadCount"] = 8;
     }
     if (index == 2) {
         p.values["transferMode"] = 5;
@@ -99,6 +104,9 @@ RobocopyProfile RobocopyProfile::preset(int index) {
         p.values["copyOwner"] = true;
         p.values["copyAuditing"] = true;
     }
+    if (index == 4) {p.values["performanceMode"] = 1;p.values["threadCount"] = 4;}
+    if (index == 5) {p.values["performanceMode"] = 2;p.values["threadCount"] = 32;
+        p.values["retryCount"] = 0;p.values["retryWaitSeconds"] = 0;}
     return p;
 }
 QVariantList RobocopyProfile::schema() {
@@ -136,6 +144,10 @@ QVariantList RobocopyProfile::schema() {
     auto f = [](QString key, QString label, QString flag, QString type = "bool", QString help = "") {
         return QVariantMap{{"key", key}, {"label", label}, {"flag", flag}, {"type", type}, {"help", help}};
     };
+    choice("Performance profile", "performanceMode",
+           {"Auto (recommended)", "Safe / Silent", "NVMe Extreme", "Manual"},
+           {"AUTO", "4", "32", "MANUAL"},
+           "Auto selects 2–32 threads from both drives, CPU and RAM. Extreme uses 32 threads; it is not guaranteed faster. Manual keeps your chosen settings.");
     fields("D / Performance", {f("enableMultithreading", "Multithreaded transfers", "/MT"),
                                f("threadCount", "Worker threads (1–128)", "/MT:n", "int"),
                                f("unbufferedIo", "Unbuffered disk I/O", "/J"),

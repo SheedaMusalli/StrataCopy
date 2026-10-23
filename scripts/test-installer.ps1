@@ -7,20 +7,32 @@ $taskInstall=Join-Path $taskRoot 'test-output\installer-qa'
 $taskRegistry='HKCU:\Software\StrataCopyInstallerQA'
 $taskActualRun='HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $taskBefore=(Get-ItemProperty -LiteralPath $taskActualRun -Name StrataCopyExplorer -ErrorAction SilentlyContinue).StrataCopyExplorer
+# Seed sandbox-only preferences to verify that upgrades keep custom choices.
+$taskPreferences="$taskRegistry\Preferences\Interface"
+New-Item -Path $taskPreferences -Force | Out-Null
+Set-ItemProperty -LiteralPath $taskPreferences -Name transferOnly -Value 'true'
+Set-ItemProperty -LiteralPath $taskPreferences -Name detailed -Value 'true'
+Set-ItemProperty -LiteralPath $taskPreferences -Name completionNotifications -Value 'false'
+Set-ItemProperty -LiteralPath $taskPreferences -Name notificationAnimations -Value 'true'
+New-ItemProperty -LiteralPath $taskPreferences -Name afterCopy -Value 0 -PropertyType DWord -Force | Out-Null
 $taskResult=Start-Process -FilePath $taskSetup -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$taskInstall",'/TASKS=desktopicon,explorermenu,keyboardpaste',"/LOG=$taskRoot\build\installer-test-install.log") -WindowStyle Hidden -Wait -PassThru
 if($taskResult.ExitCode -ne 0){throw "QA install failed: $($taskResult.ExitCode)"}
-foreach($taskFile in @('StrataCopy.exe','StrataCopyExplorer.exe','StrataCopyNative-1.0.0.dll','Qt6Core.dll','unins000.exe','Shortcuts\Programs\StrataCopy.lnk','Shortcuts\Desktop\StrataCopy.lnk')){if(!(Test-Path -LiteralPath (Join-Path $taskInstall $taskFile))){throw "Missing installed file: $taskFile"}}
+foreach($taskFile in @('StrataCopy.exe','StrataCopyExplorer.exe','StrataCopyNative-1.1.0-p5.dll','Qt6Core.dll','unins000.exe','Shortcuts\Programs\StrataCopy.lnk','Shortcuts\Desktop\StrataCopy.lnk')){if(!(Test-Path -LiteralPath (Join-Path $taskInstall $taskFile))){throw "Missing installed file: $taskFile"}}
 $taskVerb=Get-Item -LiteralPath "$taskRegistry\Classes\*\shell\StrataCopy\command"
 if($taskVerb.GetValue('') -notlike '*--add*'){throw 'Copy verb was not registered'}
 $taskPaste=Get-Item -LiteralPath "$taskRegistry\Classes\Directory\Background\shell\StrataCopyPaste\command"
 if($taskPaste.GetValue('') -notlike '*--paste*'){throw 'Paste verb was not registered'}
 if(!(Get-ItemProperty -LiteralPath "$taskRegistry\Run" -Name StrataCopyExplorer).StrataCopyExplorer){throw 'Opt-in startup entry missing'}
-$taskSourceHash=(Get-FileHash -LiteralPath "$taskRoot\dist\StrataCopy-1.0.0\StrataCopy.exe").Hash
+$taskSourceHash=(Get-FileHash -LiteralPath "$taskRoot\dist\StrataCopy-1.1.0\StrataCopy.exe").Hash
 if((Get-FileHash -LiteralPath "$taskInstall\StrataCopy.exe").Hash -ne $taskSourceHash){throw 'Installed executable differs from the release'}
 $taskResult=Start-Process -FilePath "$taskInstall\StrataCopyExplorer.exe" -ArgumentList '--self-test' -WindowStyle Hidden -Wait -PassThru
 if($taskResult.ExitCode -ne 0){throw 'Installed helper self-test failed'}
 $taskResult=Start-Process -FilePath $taskSetup -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$taskInstall","/LOG=$taskRoot\build\installer-test-upgrade.log") -WindowStyle Hidden -Wait -PassThru
 if($taskResult.ExitCode -ne 0){throw 'QA upgrade failed'}
+$taskSaved=Get-ItemProperty -LiteralPath $taskPreferences
+if($taskSaved.transferOnly -ne 'true' -or $taskSaved.detailed -ne 'true' -or $taskSaved.completionNotifications -ne 'false' -or $taskSaved.notificationAnimations -ne 'true' -or $taskSaved.afterCopy -ne 0){throw 'Installer did not preserve custom preferences'}
+'PASS: installer preference pages retain tray mode, detailed layout, notifications, animations and completion action on upgrades.'
+
 if(!(Test-Path -LiteralPath "$taskRegistry\Classes\Directory\Background\shell\StrataCopyPaste\command")){throw 'Upgrade lost the previously selected Explorer menu task'}
 if(!(Get-ItemProperty -LiteralPath "$taskRegistry\Run" -Name StrataCopyExplorer).StrataCopyExplorer){throw 'Upgrade lost the previously selected startup task'}
 $taskResult=Start-Process -FilePath "$taskInstall\unins000.exe" -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=$taskRoot\build\installer-test-uninstall.log") -WindowStyle Hidden -Wait -PassThru

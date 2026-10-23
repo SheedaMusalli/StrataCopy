@@ -7,8 +7,10 @@ Drawer {
     edge: Qt.RightEdge; modal: true; dim: false
     interactive: false
     signal moveWindowRequested()
+    property var preferences
     property string integrationFeedback: ""
     property var currentGroup: appState.parameterGroups[categories.currentIndex]
+    property var threadChoices: [0,1,2,4,8,12,16,24,32,48,64,96,128]
     function openPresetPopup() {presets.popup.open()}
     onOpened: appState.refreshIntegration()
     background: Rectangle {color: "#171c24";border.color: "#364151";radius: 8}
@@ -29,14 +31,14 @@ Drawer {
         }
         LiquidCheckBox {
             Layout.fillWidth: true
-            text: "Set StrataCopy as default copy handler"
+            text: "Use StrataCopy for Explorer copy, move and delete"
             checked: appState.defaultCopyHandler
             enabled: !appState.busy
             onClicked: {appState.setKeyboardPasteIntegration(checked);drawer.integrationFeedback=appState.message}
         }
         Text {
             Layout.fillWidth: true;wrapMode: Text.WordWrap
-            text: "Use StrataCopy for Explorer paste and drag-and-drop. Uncheck to use the Windows copier."
+            text: "Handles Explorer paste, drag-and-drop and Delete. Uncheck to use Windows for these operations."
             color: "#8b9bb2";font.pixelSize: 10
         }
         Text {
@@ -56,6 +58,33 @@ Drawer {
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             ColumnLayout {
                 width: settingsScroll.availableWidth-10;spacing: 2
+                Text {text: appState.performanceSummary;Layout.fillWidth: true;wrapMode: Text.WordWrap;color: "#9eb6c8";font.pixelSize: 11}
+                Text {text: "Threads by storage type";color: "#dce5f3";font.pixelSize: 13}
+                Text {text: "Used by Auto. The lower source/destination limit wins. Custom values override hardware limits.";Layout.fillWidth: true;wrapMode: Text.WordWrap;color: "#8b9bb2";font.pixelSize: 10}
+                Repeater {
+                    model: [{label:"NVMe SSD",key:"nvmeThreads"},{label:"SATA / other SSD",key:"ssdThreads"},{label:"Mechanical HDD",key:"hddThreads"},{label:"USB / removable",key:"usbThreads"},{label:"Network / SMB",key:"networkThreads"},{label:"Unknown storage",key:"unknownThreads"}]
+                    delegate: RowLayout {
+                        required property var modelData
+                        Layout.fillWidth: true;enabled: !appState.busy
+                        Text {text: modelData.label;Layout.fillWidth: true;color: "#b2bfd2";font.pixelSize: 11}
+                        ModernComboBox {
+                            Layout.preferredWidth: 180
+                            model: drawer.threadChoices.map(n=>n===0 ? "Auto (hardware detected)" : n+" thread"+(n===1 ? "" : "s"))
+                            currentIndex: Math.max(0,drawer.threadChoices.indexOf(Number(appState.profile[modelData.key] || 0)))
+                            onActivated: appState.setOption(modelData.key,drawer.threadChoices[currentIndex])
+                        }
+                    }
+                }
+                Rectangle {Layout.fillWidth: true;height: 1;color: "#303947"}
+                Text {text: "Window defaults";color: "#dce5f3";font.pixelSize: 13}
+                ModernComboBox {Layout.fillWidth: true;model: ["Compact window", "Detailed window"];currentIndex: drawer.preferences.detailed ? 1 : 0;onActivated: drawer.preferences.detailed=currentIndex===1}
+                LiquidCheckBox {text: "Keep window on top by default";checked: drawer.preferences.pinned;onClicked: drawer.preferences.pinned=checked}
+                LiquidCheckBox {text: "Show completion notifications";checked: drawer.preferences.completionNotifications;onClicked: drawer.preferences.completionNotifications=checked}
+                LiquidCheckBox {text: "Animate notifications";checked: drawer.preferences.notificationAnimations;onClicked: drawer.preferences.notificationAnimations=checked}
+                Text {text: "After a successful transfer";color: "#8b9bb2";font.pixelSize: 11}
+                ModernComboBox {Layout.fillWidth: true;model: ["Keep open", "Close window", "Sleep PC…", "Eject drive…"];currentIndex: drawer.preferences.afterCopy;onActivated: drawer.preferences.afterCopy=currentIndex}
+                GlassButton {text: "Open destination folder";enabled: appState.destination.length>0;onClicked: appState.openDestination()}
+                Rectangle {Layout.fillWidth: true;height: 1;color: "#303947"}
                 Text {
                     visible: !!drawer.currentGroup && !!drawer.currentGroup.help
                     text: drawer.currentGroup ? drawer.currentGroup.help || "" : ""
@@ -76,7 +105,7 @@ Drawer {
                             id: radioOption
                             LiquidRadioDot {
                                 width: optionLoader.width
-                                text: optionLoader.modelData.label;badge: optionLoader.modelData.flag
+                                text: optionLoader.modelData.label;badge: ""
                                 ButtonGroup.group: choices
                                 checked: Number(appState.profile[drawer.currentGroup.key])===optionLoader.index
                                 onClicked: appState.setOption(drawer.currentGroup.key,optionLoader.index)
@@ -86,7 +115,7 @@ Drawer {
                             id: boolOption
                             LiquidCheckBox {
                                 width: optionLoader.width
-                                text: optionLoader.modelData.label;badge: optionLoader.modelData.flag
+                                text: optionLoader.modelData.label;badge: ""
                                 checked: !!appState.profile[optionLoader.modelData.key]
                                 onClicked: appState.setOption(optionLoader.modelData.key,checked)
                                 ToolTip.visible: hovered && !!optionLoader.modelData.help
@@ -101,7 +130,7 @@ Drawer {
                                 GlassField {
                                     Layout.preferredWidth: 185
                                     text: String(appState.profile[optionLoader.modelData.key] ?? "")
-                                    placeholderText: optionLoader.modelData.flag
+                                    placeholderText: ""
                                     onEditingFinished: appState.setOption(optionLoader.modelData.key,optionLoader.modelData.type==="int" ? Number(text) : text)
                                 }
                             }

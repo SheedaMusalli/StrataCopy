@@ -89,7 +89,7 @@ class NativeExplorerHost {
         wcscpy_s(content.dataDirectory, reinterpret_cast<const wchar_t *>(directory.utf16()));
         *config = content;
         UnmapViewOfFile(config);
-        enabledEvent.reset(CreateEventW(nullptr, TRUE, FALSE, L"Local\\StrataCopy.NativeCopy.Enabled.4"));
+        enabledEvent.reset(CreateEventW(nullptr, TRUE, FALSE, L"Local\\StrataCopy.NativeCopy.Enabled.5"));
         if (!enabledEvent || !SetEvent(enabledEvent.get()))
             return false;
         refresh();
@@ -111,7 +111,7 @@ class NativeExplorerHost {
             entry->thread.reset(OpenThread(SYNCHRONIZE | THREAD_QUERY_LIMITED_INFORMATION, FALSE, tid));
             if (!entry->thread)
                 continue;
-            const auto markerName = L"Local\\StrataCopy.NativeCopy.Installed.4." +
+            const auto markerName = L"Local\\StrataCopy.NativeCopy.Installed.5." +
                                     std::to_wstring(GetProcessIdOfThread(entry->thread.get()));
             UniqueHandle initialized(OpenMutexW(SYNCHRONIZE, FALSE, markerName.c_str()));
             if (initialized)

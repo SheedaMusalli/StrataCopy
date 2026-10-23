@@ -2,28 +2,25 @@ import QtQuick
 Canvas {
     id: graph
     property var points: appState.historyGraph.points
+    property real progress: appState.progress
     onPointsChanged: requestPaint()
+    onProgressChanged: requestPaint()
     onWidthChanged: requestPaint()
     onHeightChanged: requestPaint()
     onPaint: {
         const ctx=getContext("2d");ctx.reset()
-        const w=width,h=height-8
-        ctx.strokeStyle="#1d293a";ctx.lineWidth=1
-        for(let k=0;k<4;k++){const y=8+k*(h-8)/3;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke()}
-        if(points.length<2)return
+        const w=width,h=height
+        ctx.fillStyle="#20272b";ctx.fillRect(0,0,w,h)
+        ctx.strokeStyle="#354149";ctx.lineWidth=1
+        for(let x=0;x<=w;x+=w/10){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke()}
+        for(let y=0;y<=h;y+=h/4){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke()}
+        if(!points.length)return
         let maximum=10
-        for(let i=0;i<points.length;i++)maximum=Math.max(maximum,points[i].read,points[i].write)
-        const chart=(key,color,fill)=>{
-            const span=Math.max(60,points.length-1)
-            ctx.beginPath()
-            for(let i=0;i<points.length;i++){
-                const x=w-(points.length-1-i)*w/span,y=h-points[i][key]/maximum*(h-12)
-                if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)
-            }
-            ctx.strokeStyle=color;ctx.lineWidth=1.8;ctx.stroke()
-            ctx.lineTo(w,h);ctx.lineTo(w-(points.length-1)*w/span,h);ctx.closePath()
-            const gradient=ctx.createLinearGradient(0,0,0,h);gradient.addColorStop(0,fill);gradient.addColorStop(1,"transparent");ctx.fillStyle=gradient;ctx.fill()
-        }
-        chart("read","#00dce8","#16465a");chart("write","#8785ff","#292443")
+        for(let i=0;i<points.length;i++)maximum=Math.max(maximum,points[i].write*1.25)
+        const end=w*Math.max(0.01,Math.min(1,progress))
+        ctx.fillStyle="#42616e";ctx.fillRect(0,0,end,h)
+        ctx.beginPath();ctx.moveTo(0,h)
+        for(let i=0;i<points.length;i++)ctx.lineTo(end*i/Math.max(1,points.length-1),h-Math.min(h-2,points[i].write/maximum*h))
+        ctx.lineTo(end,h);ctx.closePath();ctx.fillStyle="#4cc8ec";ctx.fill()
     }
 }

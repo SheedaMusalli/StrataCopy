@@ -17,7 +17,7 @@
 #include <cstdio>
 
 namespace {
-constexpr wchar_t enableEvent[] = L"Local\\StrataCopy.NativeCopy.Enabled.4";
+constexpr wchar_t enableEvent[] = L"Local\\StrataCopy.NativeCopy.Enabled.5";
 HMODULE moduleHandle{};
 std::recursive_mutex stateMutex;
 thread_local bool replaying = false;
@@ -51,12 +51,13 @@ template <class T> struct Ref {
 struct Pending {
     std::vector<std::wstring> sources;
     std::wstring destination;
-    bool move{};
+    bool move{}, remove{};
     std::function<HRESULT()> replay;
 };
 struct State {
     std::recursive_mutex mutex;
     std::vector<Pending> pending;
+    DWORD flags = FOF_ALLOWUNDO;
     bool native = false;
     size_t characters = 0, sources = 0;
 };
@@ -384,6 +385,15 @@ HRESULT nativeOnly(IFileOperation *self) noexcept {
     }
 }
 bool compatible(const Pending &operation) {
+    if (operation.remove) {
+        if (operation.sources.empty())
+            return false;
+        for (const auto &source : operation.sources)
+            if (source.size() < 4 || source.back() == L'\\' || source.back() == L'/' ||
+                GetFileAttributesW(source.c_str()) == INVALID_FILE_ATTRIBUTES)
+                return false;
+        return true;
+    }
     if (operation.sources.empty() || operation.destination.empty())
         return false;
     const auto attributes = GetFileAttributesW(operation.destination.c_str());
@@ -433,7 +443,7 @@ HRESULT queue(IFileOperation *self, Pending operation, bool supported) {
                 state.characters + chars <= 80000;
     if (!state.pending.empty()) {
         const auto &first = state.pending.front();
-        supported = supported && first.move == operation.move &&
+        supported = supported && first.move == operation.move && first.remove == operation.remove &&
                     _wcsicmp(first.destination.c_str(), operation.destination.c_str()) == 0;
     }
     if (state.native || !supported) {
@@ -534,7 +544,9 @@ std::wstring jsonString(const std::wstring &s) {
 std::wstring payload(const State &state) {
     const auto &first = state.pending.front();
     std::wstring json = L"{\"native\":true,\"operation\":\"";
-    json += first.move ? L"move" : L"copy";
+    json += first.remove ? ((state.flags & (FOF_ALLOWUNDO | FOFX_RECYCLEONDELETE)) ? L"recycle" : L"delete")
+            : first.move ? L"move"
+                         : L"copy";
     json += L"\",\"destination\":" + jsonString(first.destination) + L",\"sources\":[";
     bool comma = false;
     for (const auto &op : state.pending)
@@ -646,6 +658,7 @@ HRESULT STDMETHODCALLTYPE perform(IFileOperation *self) noexcept {
             std::lock_guard lock(owner->mutex);
             state.pending = std::move(owner->pending);
             state.native = owner->native;
+            state.flags = owner->flags;
         }
         trace("perform-pending", unsigned(state.pending.size()));
         trace("perform-native", state.native);
@@ -704,14 +717,56 @@ HRESULT STDMETHODCALLTYPE renameMany(IFileOperation *self, IUnknown *p, LPCWSTR 
     NATIVE_GUARD;
     return function<HRESULT(STDMETHODCALLTYPE *)(IFileOperation *, IUnknown *, LPCWSTR)>(13)(self, p, n);
 }
+HRESULT STDMETHODCALLTYPE operationFlags(IFileOperation *self, DWORD flags) {
+    auto result = function<HRESULT(STDMETHODCALLTYPE *)(IFileOperation *, DWORD)>(5)(self, flags);
+    try {
+        if (SUCCEEDED(result) && !replaying) {
+            auto owner = stateFor(self);
+            if (owner) {
+                std::lock_guard lock(owner->mutex);
+                owner->flags = flags;
+            }
+        }
+    } catch (...) {
+        interceptionFault = true;
+    }
+    return result;
+}
 HRESULT STDMETHODCALLTYPE deleteOne(IFileOperation *self, IShellItem *p, IFileOperationProgressSink *sink) {
-    NATIVE_GUARD;
-    return function<HRESULT(STDMETHODCALLTYPE *)(IFileOperation *, IShellItem *,
-                                                 IFileOperationProgressSink *)>(18)(self, p, sink);
+    using Fn = HRESULT(STDMETHODCALLTYPE *)(IFileOperation *, IShellItem *, IFileOperationProgressSink *);
+    if (replaying)
+        return function<Fn>(18)(self, p, sink);
+    try {
+        Pending pending;
+        pending.remove = true;
+        auto path = pathOf(p);
+        if (!path.empty())
+            pending.sources.push_back(path);
+        Ref<IShellItem> item(p);
+        Ref<IFileOperationProgressSink> progress(sink);
+        pending.replay = [=] { return function<Fn>(18)(self, item.p, progress.p); };
+        return queue(self, std::move(pending), true);
+    } catch (...) {
+        auto hr = nativeOnly(self);
+        return FAILED(hr) ? hr : function<Fn>(18)(self, p, sink);
+    }
 }
 HRESULT STDMETHODCALLTYPE deleteMany(IFileOperation *self, IUnknown *p) {
-    NATIVE_GUARD;
-    return function<HRESULT(STDMETHODCALLTYPE *)(IFileOperation *, IUnknown *)>(19)(self, p);
+    using Fn = HRESULT(STDMETHODCALLTYPE *)(IFileOperation *, IUnknown *);
+    if (replaying)
+        return function<Fn>(19)(self, p);
+    Ref<IUnknown> replaySource(p);
+    try {
+        Pending pending;
+        pending.remove = true;
+        const bool supported = itemPaths(p, pending.sources, replaySource);
+        Ref<IUnknown> items(replaySource);
+        pending.replay = [=] { return function<Fn>(19)(self, items.p); };
+        return queue(self, std::move(pending), supported);
+    } catch (...) {
+        auto hr = nativeOnly(self);
+        return FAILED(hr) ? hr : function<Fn>(19)(self, replaySource.p);
+    }
 }
 HRESULT STDMETHODCALLTYPE newItem(IFileOperation *self, IShellItem *p, DWORD attr, LPCWSTR n, LPCWSTR t,
                                   IFileOperationProgressSink *sink) {
@@ -733,7 +788,7 @@ bool initialize(bool test) noexcept {
         if (!test && (!leaf || _wcsicmp(leaf + 1, L"explorer.exe") != 0))
             return false;
         const auto markerName =
-            L"Local\\StrataCopy.NativeCopy.Installed.4." + std::to_wstring(GetCurrentProcessId());
+            L"Local\\StrataCopy.NativeCopy.Installed.5." + std::to_wstring(GetCurrentProcessId());
         strata::UniqueHandle marker(CreateMutexW(nullptr, FALSE, markerName.c_str()));
         if (!marker || GetLastError() == ERROR_ALREADY_EXISTS)
             return false;
@@ -750,13 +805,15 @@ bool initialize(bool test) noexcept {
             int index;
             void *detour;
         };
-        Hook hooks[] = {{2, reinterpret_cast<void *>(release)},    {8, reinterpret_cast<void *>(properties)},
-                        {10, reinterpret_cast<void *>(applyOne)},  {11, reinterpret_cast<void *>(applyMany)},
-                        {12, reinterpret_cast<void *>(renameOne)}, {13, reinterpret_cast<void *>(renameMany)},
-                        {14, reinterpret_cast<void *>(moveOne)},   {15, reinterpret_cast<void *>(moveMany)},
-                        {16, reinterpret_cast<void *>(copyOne)},   {17, reinterpret_cast<void *>(copyMany)},
-                        {18, reinterpret_cast<void *>(deleteOne)}, {19, reinterpret_cast<void *>(deleteMany)},
-                        {20, reinterpret_cast<void *>(newItem)},   {21, reinterpret_cast<void *>(perform)}};
+        Hook hooks[] = {
+            {2, reinterpret_cast<void *>(release)},     {5, reinterpret_cast<void *>(operationFlags)},
+            {8, reinterpret_cast<void *>(properties)},  {10, reinterpret_cast<void *>(applyOne)},
+            {11, reinterpret_cast<void *>(applyMany)},  {12, reinterpret_cast<void *>(renameOne)},
+            {13, reinterpret_cast<void *>(renameMany)}, {14, reinterpret_cast<void *>(moveOne)},
+            {15, reinterpret_cast<void *>(moveMany)},   {16, reinterpret_cast<void *>(copyOne)},
+            {17, reinterpret_cast<void *>(copyMany)},   {18, reinterpret_cast<void *>(deleteOne)},
+            {19, reinterpret_cast<void *>(deleteMany)}, {20, reinterpret_cast<void *>(newItem)},
+            {21, reinterpret_cast<void *>(perform)}};
         auto status = MH_Initialize();
         if (status != MH_OK)
             return false;

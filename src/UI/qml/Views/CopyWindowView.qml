@@ -11,6 +11,8 @@ Item {
     signal showHistory()
     signal toggleDetails()
     property bool detailsExpanded: false
+    property bool transferOnly: false
+    property int completionDefault: 1
     property int completionChoice: completion.currentIndex
     property string actionName: Number(appState.profile.transferMode)===5 ? "Mirror" : [3,4].indexOf(Number(appState.profile.transferMode))>=0 ? "Move" : "Copy"
     function sourceSummary() {
@@ -23,7 +25,7 @@ Item {
         anchors.fill: parent; spacing: 10
         RowLayout {
             Layout.fillWidth: true; Layout.maximumHeight: 28
-            Text {text: appState.busy ? appState.paused ? "Transfer paused" : "Copying files" : appState.outcome === "success" ? "All done" : appState.outcome === "error" ? "Needs attention" : "Ready to copy";font.pixelSize: 21;font.weight: Font.DemiBold;color: "#ecf0f7";Layout.fillWidth: true}
+            Text {text: appState.busy ? appState.paused ? "Transfer paused" : (appState.deleting ? "Deleting items" : "Copying files") : appState.outcome === "success" ? "All done" : appState.outcome === "error" ? "Needs attention" : "Ready to copy";font.pixelSize: 21;font.weight: Font.DemiBold;color: "#ecf0f7";Layout.fillWidth: true}
             Text {text: appState.sourceFileCount ? appState.sourceFileCount + " files · " + appState.totalSize : appState.sources.length ? appState.sources.length + " source" + (appState.sources.length===1 ? "" : "s") : "";font.pixelSize: 11;color: "#8a96a9"}
         }
         Rectangle {
@@ -36,11 +38,12 @@ Item {
                     Layout.fillWidth: true; Layout.maximumHeight: 30; spacing: 8
                     Text {text: "From";color: "#8c98aa";font.pixelSize: 12;Layout.preferredWidth: 36}
                     Text {text: view.sourceSummary();color: appState.sources.length ? "#dde5f1" : "#8995a7";font.pixelSize: 12;elide: Text.ElideMiddle;Layout.fillWidth: true;ToolTip.visible: sourceHover.hovered && appState.sources.length>0;ToolTip.text: appState.sources.join("\n");HoverHandler {id: sourceHover}}
-                    GlassButton {text: "+ Files";implicitHeight: 28;enabled: !appState.busy;onClicked: view.addFiles()}
-                    GlassButton {text: "+ Folder";implicitHeight: 28;enabled: !appState.busy;onClicked: view.addFolder()}
+                    GlassButton {text: "+ Files";implicitHeight: 28;onClicked: view.addFiles()}
+                    GlassButton {text: "+ Folder";implicitHeight: 28;onClicked: view.addFolder()}
                     GlassButton {text: "...";implicitWidth: 29;implicitHeight: 28;onClicked: queueDialog.open();ToolTip.visible: hovered;ToolTip.text: "Manage sources"}
                 }
                 RowLayout {
+                    visible: !appState.deleting
                     Layout.fillWidth: true; Layout.maximumHeight: 30; spacing: 8
                     Text {text: "To";color: "#8c98aa";font.pixelSize: 12;Layout.preferredWidth: 36}
                     GlassField {id: destination;Layout.fillWidth: true;implicitHeight: 29;text: appState.destination;placeholderText: "Choose destination folder";enabled: !appState.busy;onEditingFinished: appState.destination=text}
@@ -55,7 +58,7 @@ Item {
                 Text {text: Math.round(appState.progress*100)+"%";font.pixelSize: 23;font.weight: Font.DemiBold;color: "#ecf0f7"}
                 Text {text: appState.busy ? "estimated" : "complete";visible: appState.busy || appState.progress>0;font.pixelSize: 11;color: "#8693a7";Layout.alignment: Qt.AlignBottom;Layout.bottomMargin: 3}
                 Item {Layout.fillWidth: true}
-                Text {text: appState.paused ? "Paused" : Number(appState.stats.writeMbps || 0).toFixed(1)+" MB/s";font.pixelSize: 13;color: "#a9cfff"}
+                Text {visible: !appState.deleting;text: appState.paused ? "Paused" : Number(appState.stats.writeMbps || 0).toFixed(1)+" MB/s";font.pixelSize: 13;color: "#a9cfff"}
             }
             Rectangle {
                 Layout.fillWidth: true; height: 7; radius: 3; color: "#292f3b"
@@ -70,8 +73,9 @@ Item {
         Rectangle {
             Layout.fillWidth: true; Layout.preferredHeight: 60; Layout.maximumHeight: 60
             color: "#151b25"; radius: 5; border.color: "#2b3544"
+            visible: !appState.deleting
             TelemetryGraph {anchors.fill: parent;anchors.margins: 8}
-            Text {anchors.right: parent.right;anchors.top: parent.top;anchors.margins: 9;text: "Transfer speed";color: "#778aa5";font.pixelSize: 10}
+            Text {anchors.right: parent.right;anchors.top: parent.top;anchors.margins: 9;text: "Speed: " + Number(appState.stats.writeMbps || 0).toFixed(1) + " MB/s";color: "#778aa5";font.pixelSize: 10}
         }
         ColumnLayout {
             visible: view.detailsExpanded
@@ -85,11 +89,21 @@ Item {
             FileTable {Layout.fillWidth: true;Layout.fillHeight: true;Layout.minimumHeight: 115}
             RowLayout {
                 Layout.fillWidth: true; Layout.maximumHeight: 30
-                Text {text: "After copying";font.pixelSize: 11;color: "#8c98aa"}
-                ModernComboBox {id: completion;Layout.preferredWidth: 150;implicitHeight: 28;currentIndex: 1;model: ["Keep open","Close window","Sleep PC…","Eject drive…"]}
+                Text {text: "After completion";font.pixelSize: 11;color: "#8c98aa"}
+                ModernComboBox {id: completion;Layout.preferredWidth: 150;implicitHeight: 28;currentIndex: view.completionDefault;model: ["Keep open","Close window","Sleep PC…","Eject drive…"]}
                 Item {Layout.fillWidth: true}
-                GlassButton {text: "Command";implicitHeight: 28;onClicked: commandDialog.open()}
                 GlassButton {text: "History";implicitHeight: 28;onClicked: view.showHistory()}
+            }
+        }
+        ListView {
+            visible: !appState.busy && appState.recentRuns.length > 0
+            Layout.fillWidth: true;Layout.preferredHeight: 48;clip: true
+            model: appState.recentRuns.slice(0, 2)
+            delegate: Text {
+                required property var modelData
+                width: ListView.view.width;height: 24;elide: Text.ElideMiddle
+                text: modelData.state + " · " + (modelData.payload.destination || "")
+                color: "#92a4ba";font.pixelSize: 11
             }
         }
         Item {visible: !view.detailsExpanded;Layout.fillHeight: true;Layout.minimumHeight: 0}
@@ -105,9 +119,10 @@ Item {
             Layout.fillWidth: true; Layout.maximumHeight: 34; spacing: 8
             GlassButton {text: view.detailsExpanded ? "Less" : "Details";onClicked: view.toggleDetails()}
             GlassButton {text: "Settings";onClicked: view.showParameters()}
+            GlassButton {text: "History";onClicked: view.showHistory()}
             Item {Layout.fillWidth: true}
             GlassButton {text: "Cancel";visible: appState.busy;danger: true;onClicked: appState.cancel()}
-            GlassButton {text: appState.busy ? (appState.paused ? "Resume" : "Pause") : view.actionName;accent: true;Layout.preferredWidth: 90;onClicked: {destination.focus=false;if(appState.busy)appState.togglePause();else {appState.destination=destination.text;appState.start()}}}
+            GlassButton {visible: (appState.busy && !appState.deleting) || (!appState.busy && !view.transferOnly);text: appState.busy ? (appState.paused ? "Resume" : "Pause") : view.actionName;accent: true;Layout.preferredWidth: 90;onClicked: {destination.focus=false;if(appState.busy)appState.togglePause();else {appState.destination=destination.text;appState.start()}}}
         }
     }
     ModernDialog {
@@ -125,18 +140,6 @@ Item {
                 GlassButton {text: "Remove";implicitHeight: 27;enabled: !appState.busy;onClicked: appState.removeSource(index)}
             }
             Text {visible: appState.sources.length===0;anchors.centerIn: parent;text: "No sources added yet.";font.pixelSize: 12;color: "#8d9aad"}
-        }
-    }
-    ModernDialog {
-        id: commandDialog;title: "Robocopy command"
-        width: Math.min(570,view.width+10);height: 270;standardButtons: Dialog.Close
-        contentItem: ColumnLayout {
-            ScrollView {
-                Layout.fillWidth: true;Layout.fillHeight: true;contentWidth: availableWidth
-                ScrollBar.vertical: SlimScrollBar {}
-                TextArea {readOnly: true;text: appState.commandPreview;wrapMode: TextEdit.WrapAnywhere;color: "#b6c8e1";font.family: LiquidGlassTheme.mono;font.pixelSize: 11;selectByMouse: true;background: Rectangle {color: "#11161e";radius: 5}}
-            }
-            RowLayout {GlassButton {text: "Copy command";onClicked: appState.copyCommand()}GlassButton {text: "Export script…";onClicked: view.saveScript()}}
         }
     }
 }

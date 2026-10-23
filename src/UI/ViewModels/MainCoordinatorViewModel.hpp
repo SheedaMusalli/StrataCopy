@@ -1,10 +1,12 @@
 #pragma once
 #include "Core/RobocopyProcessSupervisor.hpp"
+#include "Core/DeletionSupervisor.hpp"
 #include "Core/UpdateChecker.hpp"
 #include "Persistence/SqliteQueueStore.hpp"
 #include "UI/Models/FileTransferListModel.hpp"
 #include "UI/Models/TelemetryHistoryModel.hpp"
 #include <QTimer>
+#include <QElapsedTimer>
 #include <QCoreApplication>
 #include <QUrl>
 namespace strata {
@@ -14,10 +16,12 @@ class MainCoordinatorViewModel : public QObject {
     Q_PROPERTY(QString destination READ destination WRITE setDestination NOTIFY queueChanged)
     Q_PROPERTY(QVariantMap profile READ profile NOTIFY profileChanged)
     Q_PROPERTY(QVariantList parameterGroups READ parameterGroups CONSTANT)
+    Q_PROPERTY(QString performanceSummary READ performanceSummary NOTIFY profileChanged)
     Q_PROPERTY(QStringList builtinPresets READ builtinPresets CONSTANT)
     Q_PROPERTY(QVariantList savedPresets READ savedPresets NOTIFY presetsChanged)
     Q_PROPERTY(QString commandPreview READ commandPreview NOTIFY commandChanged)
     Q_PROPERTY(QString validation READ validation NOTIFY commandChanged)
+    Q_PROPERTY(bool deleting READ deleting NOTIFY stateChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY stateChanged)
     Q_PROPERTY(bool paused READ paused NOTIFY stateChanged)
     Q_PROPERTY(QString phase READ phase NOTIFY stateChanged)
@@ -52,12 +56,19 @@ class MainCoordinatorViewModel : public QObject {
     QVariantList parameterGroups() const {
         return RobocopyProfile::schema();
     }
+    QString performanceSummary() const {
+        return m_performanceSummary;
+    }
     QStringList builtinPresets() const;
     QVariantList savedPresets() const {
         return m_store.presets();
     }
     QString commandPreview() const;
     QString validation() const;
+    bool deleting() const {
+        return m_deleting;
+    }
+    Q_INVOKABLE void confirmDeletion();
     bool busy() const {
         return m_busy;
     }
@@ -116,9 +127,7 @@ class MainCoordinatorViewModel : public QObject {
     Q_INVOKABLE void loadPreset(int);
     Q_INVOKABLE bool start(bool dryRun = false, bool destructiveConfirmed = false);
     Q_INVOKABLE void cancel();
-    Q_INVOKABLE void resolveFileConflict(quint64 token, int choice) {
-        m_supervisor.resolveConflict(token, choice);
-    }
+    Q_INVOKABLE void resolveFileConflict(quint64 token, int choice, bool all = false);
     Q_INVOKABLE void togglePause();
     Q_INVOKABLE void setFilter(const QString &category) {
         m_filter.setCategory(category);
@@ -154,6 +163,7 @@ class MainCoordinatorViewModel : public QObject {
     void integrationChanged();
     void updateCheckChanged();
     void updateCheckFinished(QString message);
+    void deletionConfirmationRequired(bool permanent, QStringList paths);
     void fileConflictRequired(QVariantMap conflict);
     void profileChanged();
     void commandChanged();
@@ -163,6 +173,7 @@ class MainCoordinatorViewModel : public QObject {
     void runsChanged();
     void destructiveConfirmationRequired(QString);
     void completedSuccessfully();
+    void transferSucceeded(qint64 elapsedMilliseconds);
     void closeRequested();
     void previewReady();
 
@@ -177,8 +188,12 @@ class MainCoordinatorViewModel : public QObject {
     QString m_destination, m_phase = "Ready to transfer", m_message, m_outcome, m_logPath, m_dataDir;
     bool m_busy = false, m_paused = false, m_storeReady = false;
     bool m_confirmationPending = false;
-    QString m_explorerRequestPath;
+    bool m_explorerRun = false, m_deleting = false, m_permanentDelete = false;
+    int m_conflictChoice = -1;
+    quint64 m_conflictToken = 0;
+    QString m_explorerRequestPath, m_runDestination, m_performanceSummary;
     QTimer m_importTimer;
+    QElapsedTimer m_runClock;
     double m_progress = 0;
     quint64 m_totalBytes = 0, m_totalFiles = 0;
     QVariantMap m_stats{{"readMbps", 0}, {"writeMbps", 0}, {"iops", 0}, {"elapsed", 0}};
@@ -189,6 +204,7 @@ class MainCoordinatorViewModel : public QObject {
     TelemetryHistoryModel m_graph;
     QTimer m_flushTimer, m_saveTimer;
     RobocopyProcessSupervisor m_supervisor;
+    DeletionSupervisor m_deletion;
     UpdateChecker m_updateChecker{QCoreApplication::applicationVersion()};
 };
 } // namespace strata
