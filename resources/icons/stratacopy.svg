@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>StrataCopy — Forward Strata</title>
+  <desc>An original stack of three transfer layers. A forward arrow is cut into the cyan upper layer.</desc>
+  <defs>
+    <linearGradient id="tile" x1="24" y1="8" x2="230" y2="256" gradientUnits="userSpaceOnUse"><stop stop-color="#1b2b40"/><stop offset="1" stop-color="#080e19"/></linearGradient>
+    <linearGradient id="top" x1="56" y1="58" x2="200" y2="110" gradientUnits="userSpaceOnUse"><stop stop-color="#8bfbff"/><stop offset="0.5" stop-color="#22e0ee"/><stop offset="1" stop-color="#40b8f4"/></linearGradient>
+    <linearGradient id="mid" x1="58" y1="120" x2="198" y2="175" gradientUnits="userSpaceOnUse"><stop stop-color="#25bed8"/><stop offset="1" stop-color="#597be9"/></linearGradient>
+    <linearGradient id="low" x1="58" y1="168" x2="198" y2="224" gradientUnits="userSpaceOnUse"><stop stop-color="#4c72ce"/><stop offset="1" stop-color="#8d81fa"/></linearGradient>
+    <linearGradient id="rim" x1="12" y1="4" x2="240" y2="252" gradientUnits="userSpaceOnUse"><stop stop-color="#b8e7f4" stop-opacity=".45"/><stop offset=".45" stop-color="#53718d" stop-opacity=".12"/><stop offset="1" stop-color="#618ded" stop-opacity=".4"/></linearGradient>
+  </defs>
+  <rect x="3" y="3" width="250" height="250" rx="56" fill="url(#tile)" stroke="url(#rim)" stroke-width="2"/>
+  <path d="M56 160 128 196 200 160 200 188Q200 193 195 196L134 227Q128 230 122 227L61 196Q56 193 56 188Z" fill="url(#low)"/>
+  <path d="M56 112 128 148 200 112 200 140Q200 145 195 148L134 179Q128 182 122 179L61 148Q56 145 56 140Z" fill="url(#mid)"/>
+  <path d="M61 72 122 41Q128 38 134 41L195 72Q205 77 195 82L134 113Q128 116 122 113L61 82Q51 77 61 72Z" fill="url(#top)"/>
+  <path d="M96 70H139V58L168 77 139 96V84H96Z" fill="#0c263b"/>
+  <path d="M59 77 124 44Q128 42 132 44L197 77M59 116 125 150Q128 152 132 150L197 116M59 164 125 198Q128 200 132 198L197 164" fill="none" stroke="#d5ffff" stroke-opacity=".3" stroke-width="1.5" stroke-linecap="round"/>
+</svg>
