@@ -1,0 +1,455 @@
+================================================================================
+STRATACOPY: PURE C++20 & QT 6 HIGH-PERFORMANCE ROBOCOPY ORCHESTRATION SYSTEM
+APPLE "LIQUID GLASS" DARK THEME & MASTER CODEX PROMPT SPECIFICATION
+================================================================================
+
+--------------------------------------------------------------------------------
+1. PURE-ROBOCOPY C++20 & QT 6 ARCHITECTURE BLUEPRINT
+--------------------------------------------------------------------------------
+
+A major architectural limitation of standard Robocopy GUI wrappers is that when 
+running robocopy.exe at maximum threads (/MT:128), parsing stdout alone either 
+bottlenecks the console pipe or loses byte-level speed accuracy.
+
+This native C++ architecture solves that by combining Non-Blocking Pipe Parsing 
+(for file names, exclusions, and error logs) with Kernel Process I/O Telemetry 
+(GetProcessIoCounters) polled directly against the robocopy.exe process handle 
+every 16ms. Even when /MT:128 transfers 50,000 tiny files per second, the Windows 
+kernel reports exact byte-level Read Speed, Write Speed, and IOPS with zero CPU 
+overhead.
+
++===================================================================================================+
+|             PRESENTATION LAYER: QT 6 QUICK SCENEGRAPH (RHI D3D12) — "LIQUID GLASS" UI             |
+|  +-----------------------------+  +-------------------------------+  +-------------------------+  |
+|  | Stage 1: Liquid Glass HUD   |  | Stage 2: Split-Deck Workbench |  | Interactive Parameter   |  |
+|  | - Refractive Frosted Pill   |  | - Live /MT:128 Activity Grid  |  |   Drawer (Dots & Checks)|  |
+|  | - Specular Fresnel Borders  |  | - QAbstractListModel (1M Rows)|  | - Smart Default Profile |  |
+|  | - Liquid Plasma Progress    |  | - Dual Read/Write Shader Graph|  | - Live CLI Preview Pill |  |
+|  +--------------+--------------+  +---------------+---------------+  +------------+------------+  |
++-----------------|---------------------------------|-------------------------------|---------------+
+                  | Lock-Free Atomic State Bridge (60Hz-144Hz QTimer / QQuickItem)  | Flag Bitmasks
++-----------------v---------------------------------v-------------------------------v---------------+
+|                         C++20 ROBOCOPY ORCHESTRATION & TELEMETRY LAYER                            |
+|  +-----------------------------+  +-------------------------------+  +-------------------------+  |
+|  | RobocopyCommandCompiler     |  | Kernel Telemetry Poller       |  | Multi-Source Batcher    |  |
+|  | - Compiles Radio Dots &     |  | - GetProcessIoCounters()      |  | - Groups mixed Explorer |  |
+|  |   Checkboxes into CLI Flags |  |   (Exact R/W MB/s & IOPS)     |  |   drag-drop items into  |  |
+|  | - Enforces Smart Defaults   |  | - Fast FindFirstFileExW       |  |   sequential/parallel   |  |
+|  |   (/MT:128, /J, /E, /R:2)   |  |   Denominator Pre-Scanner     |  |   robocopy.exe jobs     |  |
+|  +--------------+--------------+  +---------------+---------------+  +------------+------------+  |
++-----------------|---------------------------------|-------------------------------|---------------+
+                  | CreateProcessW                  | Process Handle                | Job Queue
++-----------------v---------------------------------v-------------------------------v---------------+
+|                             PURE ROBOCOPY.EXE PROCESS SUPERVISOR                                  |
+|  +---------------------------------------------------------------------------------------------+  |
+|  | - Spawns C:\Windows\System32\robocopy.exe inside a Win32 Job Object (Clean Lifecycle)       |  |
+|  | - True Hardware Pause / Resume via ntdll.dll NtSuspendProcess() & NtResumeProcess()         |  |
+|  | - Zero-Allocation SIMD/Pointer Stdout Pipe Parser (Tracks active files, skips, & failures)  |  |
+|  | - Dynamic /IPG:n Bandwidth Calculation & Robocopy Bitmask Exit Code Decoder (0x00 - 0x10)   |  |
+|  +----------------------------------------------+----------------------------------------------+  |
++-------------------------------------------------|-------------------------------------------------+
+                                                  | Optional Post-Robocopy Pass
++-------------------------------------------------v-------------------------------------------------+
+|                      POST-TRANSFER VERIFICATION, SHELL & PERSISTENCE LAYER                        |
+|  +-----------------------------+  +-------------------------------+  +-------------------------+  |
+|  | Post-Copy SIMD Verifier     |  | Windows 11/10 Shell Bridge    |  | SQLite3 WAL Job Journal |  |
+|  | - XXH3-64 / BLAKE3 / SHA256 |  | - IExplorerCommand Context    |  | - Crash Recovery State  |  |
+|  | - Sidecar .xxh3 / .sha256   |  | - QLocalServer Named Pipe IPC |  | - Preset & History DB   |  |
+|  +-----------------------------+  +-------------------------------+  +-------------------------+  |
++===================================================================================================+
+
+
+--------------------------------------------------------------------------------
+2. COMPLETE ROBOCOPY PARAMETER MATRIX (RADIO DOTS VS. CHECKBOXES)
+--------------------------------------------------------------------------------
+
+Every Robocopy parameter is mapped to either a Radio Button / Dot (•) for mutually 
+exclusive choices, or a Checkbox [✓] for additive flags. The Smart High-Speed 
+Default Profile is pre-selected on startup.
+
+GROUP A: TRANSFER MODE — (Mutually Exclusive Radio Dots)
+- (•) Copy All Subfolders (Including Empty) [/E] -> [DEFAULT]
+      Copies the entire directory structure, preserving empty subfolders.
+- ( ) Copy Non-Empty Subfolders Only [/S]
+      Copies subdirectories containing files; discards empty directories.
+- ( ) Root Folder Files Only (Level 1) [/LEV:1]
+      Restricts file copying to the top-level root directory only.
+- ( ) Move Files & Folders (Delete Source) [/MOVE]
+      Moves files and directories, deleting them from the source after copying.
+- ( ) Move Files Only (Keep Source Folders) [/MOV]
+      Moves files, deleting them from source, but keeps directory structure intact.
+- ( ) Mirror Directory (Exact Sync & Purge) [/MIR]
+      Makes destination an exact replica of source, purging extra destination files.
+
+GROUP B: COLLISION & OVERWRITE BEHAVIOR — (Mutually Exclusive Radio Dots)
+- (•) Smart Delta Copy (Changed & Newer) [Default Robocopy Behavior] -> [DEFAULT]
+      Copies new files and overwrites destination files if size or timestamp differs.
+- ( ) Overwrite Older Only (Keep Newer Target) [/XO]
+      Excludes older files; destination version is protected if it is newer.
+- ( ) Skip All Existing Destination Files [/XC /XN /XO]
+      Only copies files that do not exist at all in the destination.
+- ( ) Force Overwrite Everything (Include Same) [/IS /IT]
+      Forces re-copying even if destination files are completely identical.
+
+GROUP C: ACCESS & RESILIENCE MODE — (Mutually Exclusive Radio Dots)
+- (•) Standard Fast Kernel I/O [Default] -> [DEFAULT]
+      Maximum local NVMe/SSD/HDD throughput without checkpoint or security overhead.
+- ( ) Restartable Network Mode [/Z]
+      Writes resume checkpoints inside partially copied files for flaky network connections.
+- ( ) Backup Privilege Override Mode [/B]
+      Uses SeBackupPrivilege and SeRestorePrivilege to bypass NTFS DACL restrictions (Admin).
+- ( ) Restartable + Backup Fallback [/ZB]
+      Tries Restartable mode first; falls back to Backup mode if access is denied.
+
+GROUP D: MULTITHREADING, I/O & SPEED — (Checkboxes & Sliders)
+- [✓] Maximum Multithreaded Transfer [/MT:128] -> [DEFAULT ON: 128 THREADS]
+      Spawns 128 parallel Robocopy worker threads (slider range 1 to 128).
+- [✓] Unbuffered Direct Disk I/O [/J] -> [DEFAULT ON]
+      Bypasses system file caching for large files to eliminate RAM exhaustion.
+- [ ] SMB Network Compression [/COMPRESS]
+      Requests SMB 3.1.1 on-the-wire compression for network transfers.
+- [ ] Disable Windows Copy Offload [/NOOFFLOAD]
+      Forces standard host-side copy instead of hardware storage array offloading (ODX).
+- [ ] Bandwidth Throttle (Inter-Packet Gap) [/IPG:n]
+      Injects a 1-1000ms delay between packets to prevent network saturation.
+
+GROUP E: FILE ATTRIBUTES, PERMISSIONS & LINKS — (Checkboxes)
+- [✓] Copy File Data, Attributes & Timestamps [/COPY:DAT] -> [DEFAULT ON]
+      Copies file payload, standard NTFS attributes, and modification timestamps.
+- [✓] Preserve Directory Timestamps [/DCOPY:DAT] -> [DEFAULT ON]
+      Keeps folder creation and modification timestamps synchronized.
+- [✓] Exclude Junction Loops (Anti-Hang) [/XJ] -> [DEFAULT ON]
+      Prevents infinite loops on Windows directory junctions and symlinks.
+- [✓] FAT / NAS 2-Second Time Tolerance [/FFT] -> [DEFAULT ON]
+      Prevents false re-copies when transferring between NTFS and exFAT/FAT32/NAS.
+- [ ] Copy NTFS Security ACLs [/COPY:S] (/SEC)
+      Transfers discretionary access control lists (requires matching domain/local SID).
+- [ ] Copy File Ownership & Auditing Info [/COPY:OU] (/COPYALL)
+      Transfers Owner and Auditing SACL information (requires UAC Administrator elevation).
+- [ ] Copy Symbolic Links as Links (Not Targets) [/SL]
+      Copies symlink pointers rather than the target data they reference.
+- [ ] Fix Security & Timestamps on Skipped Files [/SECFIX /TIMFIX]
+      Updates security metadata and timestamps even on files not copied.
+
+GROUP F: RETRY LOGIC, FILTERING & VERIFICATION — (Checkboxes & Inputs)
+- [✓] Fast Fail-Safe Retry Limit [/R:2 /W:2] -> [DEFAULT ON]
+      Limits retries to 2 attempts waiting 2 seconds (overrides Robocopy's 1,000,000 retry hang).
+- [ ] Wait for Network Share Registration [/TBD]
+      Waits if network share names are resolving during boot or failover.
+- [ ] Dry-Run Simulation Only (List Mode) [/L]
+      Populates the UI diff grid with planned changes without committing disk writes.
+- [ ] Create Zero-Byte Folder Skeleton Only [/CREATE]
+      Creates destination directory hierarchy and 0-byte file shells.
+- [ ] Exclude Extra Files & Folders Logs [/XX]
+      Suppresses *EXTRA destination-only items from cluttering output.
+- [ ] Exclude Lonely Files (Sync Existing Only) [/XL]
+      Only updates files that already exist in the target folder.
+- [ ] Filter by File / Folder Wildcards [/XF patterns /XD patterns]
+      Excludes patterns like *.tmp, node_modules, .git, Thumbs.db.
+- [ ] Filter by File Size Range [/MIN:n /MAX:n]
+      Excludes files outside the specified byte size boundaries.
+- [ ] Filter by File Age / Modified Date [/MAXAGE:n /MINAGE:n]
+      Excludes files based on modification date thresholds.
+- [ ] Post-Copy XXH3 / BLAKE3 Verification [Post-Pass]
+      Runs an AVX-512 SIMD verification pass once robocopy.exe exits with code < 8.
+
+
+--------------------------------------------------------------------------------
+3. APPLE "LIQUID GLASS" DARK THEME SPECIFICATION (QT 6 QML + RHI SHADERS)
+--------------------------------------------------------------------------------
+
+Liquid Glass relies on optical physics and real-time GPU shaders rather than 
+flat hex backgrounds:
+
+1. Real-Time Lensing & Frosted Backdrop Blur:
+   Glass cards dynamically blur content beneath them using Qt 6 MultiEffect and 
+   ShaderEffectSource with a 48px to 64px Gaussian kernel and a 1.35x saturation boost.
+
+2. Specular Fresnel Rim Lighting:
+   Custom shaders calculate light refraction around curved edges, rendering a 1.2px
+   diagonal highlight: rgba(255, 255, 255, 0.42) at top-left, tapering to 
+   rgba(255, 255, 255, 0.05) at center, and rgba(0, 242, 254, 0.25) at bottom-right.
+
+3. Smoked Obsidian Palette:
+   - Base Window Backdrop: rgba(8, 10, 16, 0.72) with Windows 11 DWM Mica/Acrylic.
+   - Elevated Glass Cards: rgba(22, 27, 40, 0.52).
+   - Liquid Plasma Gradient: Linear #00F2FE -> #38BDF8 -> #6366F1 with glowing bloom.
+   - Verified Emerald: Luminous #10B981 with #34D399 rim.
+   - Conflict Warning: Warm Amber #F59E0B.
+   - Error / Retry Exceeded: Crimson Coral #F43F5E.
+
+4. Liquid Droplet Radio Dots & Checkboxes:
+   Radio dots and checkboxes resemble smoked-glass wells that fill with glowing 
+   liquid cyan (#00F2FE) upon selection, casting a subtle subsurface bloom.
+
+5. Spring Physics Transitions:
+   Harmonic spring damping (damping: 0.22, epsilon: 0.005) animates the window expansion 
+   from the Compact HUD (480px x 150px) to the Split-Deck Workbench (1120px x 740px) at 120-240 FPS.
+
+
+--------------------------------------------------------------------------------
+4. THE MASTER CODEX PROMPT (C++20 / QT 6 / ROBOCOPY / LIQUID GLASS)
+--------------------------------------------------------------------------------
+
+# MASTER ENGINEERING SPECIFICATION: "STRATACOPY" — PURE C++20 & QT 6 MULTITHREADED ROBOCOPY GUI WITH APPLE "LIQUID GLASS" DARK THEME
+
+## 1. ROLE & CORE DIRECTIVES
+You are a Principal C++ Systems Architect and Senior Qt 6 Graphics/Shader Engineer. Your task is to build StrataCopy, a complete, production-grade, ultra-fast Windows file transfer application written in pure modern C++20/C++23 and Qt 6 (Qt Quick / QML + RHI Direct3D 12 Shaders).
+
+### STRICT ARCHITECTURAL MANDATES:
+1. 100% Pure Robocopy Execution Engine: Do NOT write a custom file-copying loop (CopyFile2, ReadFile/WriteFile copy streams, etc.). Every single file copy, move, and mirror operation MUST be executed by spawning and orchestrating C:\Windows\System32\robocopy.exe.
+2. Interactive Radio-Dot & Checkbox Parameter Matrix with Smart Defaults: Every Robocopy parameter must be selectable in the UI via mutually exclusive Radio Buttons ("Dots") or additive Checkboxes, pre-loaded on startup with an Optimal High-Speed Default Profile for Average Users that uses maximum threads (/MT:128), Unbuffered I/O (/J), Empty Subfolder Copy (/E), Junction Loop Exclusion (/XJ), 2-Second FAT/NAS Tolerance (/FFT), Safe Attributes (/COPY:DAT /DCOPY:DAT), and Fast Retries (/R:2 /W:2).
+3. TeraCopy Simplicity Reimagined in Apple's "Liquid Glass" Dark Theme: Design a two-stage interface (Stage 1: Compact Floating Glass Pill -> Stage 2: 3-Zone Split-Deck Workbench + Parameter Matrix Drawer) rendered with Qt 6 RHI custom shaders: smoked obsidian translucent layers, real-time backdrop gaussian blur with saturation boost, diagonal specular Fresnel rim lighting, liquid plasma progress bars, and 120Hz spring physics.
+4. Zero-Bottleneck Kernel Telemetry: Because robocopy.exe /MT:128 can flood stdout or suppress per-file progress on millions of small files, poll the robocopy.exe process handle every 16ms using Win32 GetProcessIoCounters() to capture exact, real-time Read Speed (MB/s), Write Speed (MB/s), IOPS, and Total Bytes Transferred directly from the Windows NT Kernel, while simultaneously parsing Robocopy's stdout pipe for active filenames, skipped items, and error logs.
+
+Do NOT leave placeholders, stub classes, or // TODO comments. Implement all C++ classes, Win32 kernel wrappers, SQLite persistence, and QML/Shader files completely.
+
+---
+
+## 2. TECHNOLOGY STACK & BUILD CONFIGURATION
+- Language: C++20 / C++23 (CMAKE_CXX_STANDARD 20, MSVC /O2 /GL /utf-8 /permissive-).
+- UI Framework: Qt 6.7 / 6.8+ (Qt6::Core, Qt6::Gui, Qt6::Quick, Qt6::QuickControls2, Qt6::ShaderTools, Qt6::Network, Qt6::Sql) running on the Direct3D 12 RHI backend (QQuickWindow::setGraphicsApi(QSGRendererInterface::Direct3D12)).
+- Windows Native APIs: windows.h, winternl.h (NtSuspendProcess, NtResumeProcess), dwmapi.h (Frameless Acrylic/Mica window backdrop integration), shlobj.h (Explorer Shell Context Menu & Drag-and-Drop).
+- Post-Transfer Optional Hasher: Vendored xxhash.c (XXH3-64 SIMD) and blake3 for optional post-Robocopy verification passes.
+
+---
+
+## 3. REPOSITORY & PROJECT STRUCTURE
+
+StrataCopy/
+|-- CMakeLists.txt                           # CMake + qt_add_executable + qt_add_qml_module + qt_add_shaders
+|-- resources/
+|   |-- shaders/
+|   |   |-- liquid_glass_card.frag           # Vulkan/HLSL-compatible Qt 6 QSB refraction & Fresnel rim shader
+|   |   `-- liquid_plasma_bar.frag           # Illuminated fluid progress bar shader with specular bloom
+|   `-- icons/                               # Crisp vector SVG icons for HUD and Workbench
+|-- src/
+|   |-- main.cpp                             # QGuiApplication init, D3D12 RHI enforcement, IPC check
+|   |-- Core/
+|   |   |-- RobocopyProfile.hpp              # Complete struct of all Radio-Dot enums & Checkbox bools + Smart Defaults
+|   |   |-- RobocopyProfile.cpp
+|   |   |-- RobocopyCommandCompiler.hpp      # Compiles RobocopyProfile + Source/Dest into exact CLI args
+|   |   |-- RobocopyCommandCompiler.cpp
+|   |   |-- MultiSourceBatcher.hpp           # Groups mixed drag-and-drop files/folders into Robocopy jobs
+|   |   |-- MultiSourceBatcher.cpp
+|   |   |-- RobocopyProcessSupervisor.hpp    # Spawns robocopy.exe, JobObjects, NtSuspend/Resume, Exit Decoder
+|   |   |-- RobocopyProcessSupervisor.cpp
+|   |   |-- StdoutPipeParser.hpp             # Zero-allocation line parser for active files, extras, and errors
+|   |   |-- StdoutPipeParser.cpp
+|   |   |-- KernelTelemetryPoller.hpp        # Polls GetProcessIoCounters(hRobocopy) at 60Hz for exact MB/s & IOPS
+|   |   |-- KernelTelemetryPoller.cpp
+|   |   |-- FastPreScanner.hpp               # FindFirstFileExW (LARGE_FETCH) to compute total batch bytes upfront
+|   |   `-- FastPreScanner.cpp
+|   |-- Platform/
+|   |   |-- Win32WindowEffects.hpp           # DWM frameless acrylic/mica window shadow & hit-testing (WM_NCHITTEST)
+|   |   |-- Win32WindowEffects.cpp
+|   |   |-- PrivilegeEscalator.hpp           # Acquires SeBackupPrivilege & SeRestorePrivilege when /B or /ZB is checked
+|   |   |-- PrivilegeEscalator.cpp
+|   |   |-- DriveHardwareDetector.hpp        # Queries IOCTL_STORAGE_QUERY_PROPERTY (NVMe vs HDD vs SMB)
+|   |   |-- DriveHardwareDetector.cpp
+|   |   `-- ShellContextMenuRegistrar.hpp    # Registers Windows 11/10 Explorer Right-Click "Copy with StrataCopy"
+|   |-- Verification/
+|   |   |-- PostCopyHashVerifier.hpp         # Optional post-Robocopy XXH3-64 / BLAKE3 / SHA-256 readback verifier
+|   |   `-- PostCopyHashVerifier.cpp
+|   |-- Persistence/
+|   |   |-- SqliteQueueStore.hpp             # SQLite WAL persistence for job queues, presets, and crash recovery
+|   |   `-- SqliteQueueStore.cpp
+|   `-- UI/
+|       |-- Models/
+|       |   |-- FileTransferListModel.hpp    # High-speed QAbstractListModel handling 1,000,000+ file rows at 120fps
+|       |   |-- FileTransferListModel.cpp
+|       |   |-- TelemetryHistoryModel.hpp    # Ring-buffer exposed to QML Canvas/Shader for 60s Read/Write sparklines
+|       |   `-- PresetListModel.hpp          # Manages saved Robocopy parameter presets
+|       |-- ViewModels/
+|       |   |-- MainCoordinatorViewModel.hpp # Q_OBJECT bridging Robocopy supervisor, Profile flags, and QML UI
+|       |   `-- MainCoordinatorViewModel.cpp
+|       `-- qml/
+|           |-- Main.qml                     # Root frameless window with spring transitions (HUD <-> Workbench)
+|           |-- Theme/
+|           |   |-- LiquidGlassTheme.qml     # Singleton defining colors, blur radii, specular gradients, fonts
+|           |   |-- LiquidGlassCard.qml      # Reusable frosted glass surface with Fresnel rim & inner luminance
+|           |   |-- LiquidRadioDot.qml       # Glowing droplet radio button with spring fill animation
+|           |   |-- LiquidCheckBox.qml       # Frosted glass checkbox with neon cyan specular tick
+|           |   `-- LiquidPlasmaBar.qml      # Dual-layer glowing liquid progress tube + thread saturation strip
+|           |-- Views/
+|           |   |-- CompactHudView.qml       # Stage 1: Sleek floating glass pill (480x150)
+|           |   |-- WorkbenchSplitView.qml   # Stage 2: 3-Zone Asymmetric Split-Deck (1120x740)
+|           |   |-- ParameterMatrixDrawer.qml# Interactive Radio-Dot & Checkbox configurator for all Robocopy flags
+|           |   `-- DryRunDiffModal.qml      # Visual preview table when /L (Dry-Run Simulation) is executed
+
+---
+
+## 4. CORE C++ ROBOCOPY ENGINE SPECIFICATIONS
+
+### 4.1 Smart Default Profile & Parameter Model (RobocopyProfile.hpp)
+Create a strongly typed C++ struct exposed to QML (Q_GADGET / Q_PROPERTY) that initializes with the Optimal High-Speed Default Profile for Average Users:
+1. TransferMode (Radio Dot Enum):
+   - CopySubfoldersIncludingEmpty (/E) — [DEFAULT]
+   - CopyNonEmptySubfolders (/S)
+   - CopyTopLevelOnly (/LEV:1)
+   - MoveFilesAndFolders (/MOVE)
+   - MoveFilesOnly (/MOV)
+   - MirrorExactSync (/MIR)
+2. CollisionPolicy (Radio Dot Enum):
+   - SmartDeltaOverwrite (Default Robocopy behavior: copies new and altered files) — [DEFAULT]
+   - SkipOlderFiles (/XO)
+   - SkipAllExistingFiles (/XC /XN /XO)
+   - ForceOverwriteAll (/IS /IT)
+3. AccessResilienceMode (Radio Dot Enum):
+   - StandardFastIo (No /Z or /B overhead) — [DEFAULT]
+   - RestartableNetwork (/Z)
+   - BackupPrivilegeMode (/B)
+   - RestartableWithBackupFallback (/ZB)
+4. Performance & Multithreading (Checkboxes & Values):
+   - bool enableMultithreading = true; — [DEFAULT ON]
+   - int threadCount = 128; (/MT:128) — [DEFAULT SET TO 128 MAXIMUM THREADS]
+   - bool unbufferedIo = true; (/J) — [DEFAULT ON]
+   - bool smbCompression = false; (/COMPRESS)
+   - bool disableOffload = false; (/NOOFFLOAD)
+   - bool enableBandwidthLimit = false;
+   - int interPacketGapMs = 0; (/IPG:n)
+5. Attributes, Permissions & Symlinks (Checkboxes):
+   - bool copyData = true; (D) — [DEFAULT ON]
+   - bool copyAttributes = true; (A) — [DEFAULT ON]
+   - bool copyTimestamps = true; (T) — [DEFAULT ON]
+   - bool copySecurityAcl = false; (S)
+   - bool copyOwner = false; (O)
+   - bool copyAuditing = false; (U)
+   - bool preserveDirectoryTimestamps = true; (/DCOPY:DAT) — [DEFAULT ON]
+   - bool excludeJunctionLoops = true; (/XJ) — [DEFAULT ON]
+   - bool fatTwoSecondTolerance = true; (/FFT) — [DEFAULT ON]
+   - bool copySymlinksAsLinks = false; (/SL)
+   - bool fixSecurityOnExisting = false; (/SECFIX)
+   - bool fixTimestampsOnExisting = false; (/TIMFIX)
+6. Retries, Filters & Verification (Checkboxes & Inputs):
+   - bool fastFailSafeRetries = true; — [DEFAULT ON]
+   - int retryCount = 2; (/R:2) — [DEFAULT 2]
+   - int retryWaitSeconds = 2; (/W:2) — [DEFAULT 2]
+   - bool dryRunListOnly = false; (/L)
+   - bool createZeroByteTree = false; (/CREATE)
+   - bool excludeExtraLogs = false; (/XX)
+   - bool excludeLonelyFiles = false; (/XL)
+   - QString excludeFilePatterns = ""; (/XF)
+   - QString excludeDirPatterns = ""; (/XD)
+   - uint64_t minFileSizeBytes = 0; (/MIN:n)
+   - uint64_t maxFileSizeBytes = 0; (/MAX:n)
+   - QString maxFileAge = ""; (/MAXAGE:n)
+   - QString minFileAge = ""; (/MINAGE:n)
+   - bool verifyHashPostCopy = false; (Runs C++ XXH3-64 verification after Robocopy finishes)
+
+### 4.2 Multi-Source Drag-and-Drop Batcher (MultiSourceBatcher.cpp)
+TeraCopy allows users to drag and drop multiple distinct files and folders from different locations into a single target directory, whereas robocopy.exe syntax accepts only a single Source and Destination folder pair:
+robocopy "<SourceDir>" "<DestDir>" [File1 File2 ...] [Flags]
+Implement MultiSourceBatcher to solve this:
+1. Partition dropped paths into Directories and Loose Files.
+2. Group all Loose Files that share the same parent directory into a single RobocopyInvocation where Source = ParentDirectory, Dest = TargetRoot, and the file filter array contains "File1.ext" "File2.ext", automatically stripping /E or /S for that invocation so only those targeted files copy.
+3. For each Directory D, create a RobocopyInvocation where Source = D, Dest = TargetRoot \ D.filename(), applying the user's full RobocopyProfile flags (/E, /MT:128, /J, etc.).
+4. Execute invocations sequentially through RobocopyProcessSupervisor while aggregating total progress seamlessly across the entire batch.
+
+### 4.3 Pure Robocopy Process Supervisor & Kernel Telemetry (RobocopyProcessSupervisor.cpp & KernelTelemetryPoller.cpp)
+1. Process Execution:
+   - Spawn C:\Windows\System32\robocopy.exe via CreateProcessW with CREATE_NO_WINDOW | CREATE_SUSPENDED and Unicode environment flags.
+   - Attach the process handle to a Win32 Job Object configured with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE so no zombie robocopy.exe processes survive if the UI closes.
+   - Resume the process via ResumeThread.
+2. True Hardware Pause / Resume:
+   - Resolve NtSuspendProcess and NtResumeProcess from ntdll.dll.
+   - When the user clicks Pause in the Liquid Glass HUD, call NtSuspendProcess(hProcess) to freeze all 128 Robocopy worker threads in kernel space immediately, pausing the ETA timer and throughput graph cleanly. Call NtResumeProcess(hProcess) on Resume.
+3. 16ms Kernel I/O Telemetry (KernelTelemetryPoller.cpp):
+   - Run a high-precision multimedia timer (16ms interval = 60Hz) calling GetProcessIoCounters(hRobocopyProcess, &ioCounters).
+   - Compute instantaneous Read Speed (MB/s) from delta(ioCounters.ReadTransferCount) / deltaTime.
+   - Compute instantaneous Write Speed (MB/s) from delta(ioCounters.WriteTransferCount) / deltaTime.
+   - Compute instantaneous IOPS from delta(ioCounters.ReadOperationCount + ioCounters.WriteOperationCount) / deltaTime.
+   - Compute Overall Batch Progress (0.0 to 100.0%) by dividing cumulative WriteTransferCount across the batch by the TotalBatchBytes discovered by FastPreScanner (FindFirstFileExW with FindExInfoBasic and FIND_FIRST_EX_LARGE_FETCH).
+4. High-Speed Stdout Pipe Parser (StdoutPipeParser.cpp):
+   - Append /V /TS /FP /BYTES /NJH /NJS /NDL /NP to robocopy.exe so Robocopy emits clean, single-line machine-parseable file entries without choking the pipe with carriage returns during /MT:128 execution.
+   - Parse each line zero-copy using std::string_view to extract the status classification (New File, Newer, Older, same, *EXTRA File, ERROR), file size in bytes, and full path.
+   - Push parsed entries into FileTransferListModel via a lock-free ring buffer flushed on the UI frame tick.
+5. Robocopy Exit Code Bitmask Decoder:
+   - Decode the exit code of robocopy.exe accurately:
+     - 0: No files copied (already synchronized).
+     - 1: All files copied successfully.
+     - 2: Extra files or directories were detected.
+     - 4: Mismatched files or directories were detected.
+     - 8: Some files or directories could not be copied (copy errors occurred and retry limit was exceeded).
+     - 16: Serious fatal error (invalid command-line usage or insufficient privileges).
+   - Any exit code < 8 is treated as Success (with informational badges for 2 and 4). Exit codes >= 8 trigger the crimson Liquid Glass error state and highlight failed files in the workbench grid.
+
+---
+
+## 5. APPLE "LIQUID GLASS" DARK THEME UI SPECIFICATION (QT 6 QML + RHI SHADERS)
+
+### 5.1 Visual & Optical Design Language (LiquidGlassTheme.qml & liquid_glass_card.frag)
+Implement a genuine Apple Liquid Glass Dark Theme with the following exact optical properties:
+- Window Chrome: Frameless transparent QQuickWindow (Qt.FramelessWindowHint | Qt.Window) backed by Windows 11 DWM Acrylic/Mica blur (DwmSetWindowAttribute + DWMWA_SYSTEMBACKDROP_TYPE) and 22px super-ellipse continuous corner curvature.
+- Glass Layer Palette:
+  - Base Canvas Tint: rgba(8, 10, 16, 0.72) (Deep Space Obsidian)
+  - Elevated Glass Card (LiquidGlassCard.qml): rgba(22, 27, 40, 0.52) with a real-time MultiEffect backdrop blur (blurMax: 48, saturation: 1.35) + subtle inner luminance gradient (rgba(255, 255, 255, 0.06) at top to rgba(0, 0, 0, 0.20) at bottom).
+  - Specular Fresnel Rim Border: 1.2px gradient border around every glass card, pill, and button: rgba(255, 255, 255, 0.42) at top-left 0.0, rgba(255, 255, 255, 0.05) at 0.5, and rgba(56, 189, 248, 0.25) at bottom-right 1.0.
+  - Liquid Accents:
+    - Active Copy Plasma: Linear gradient #00F2FE -> #38BDF8 -> #6366F1 with subsurface glow.
+    - Verified / Complete: Luminous Emerald #10B981 with #34D399 specular rim.
+    - Warning / Extra / Skipped: Warm Amber #F59E0B.
+    - Error / Retry Exceeded: Crimson Coral #F43F5E.
+
+### 5.2 Stage 1: The Compact Liquid Glass HUD (CompactHudView.qml)
+- Size: 480px x 150px floating glass capsule.
+- Top Pill Row:
+  - Frosted source folder badge -> destination folder badge.
+  - Active Robocopy Mode Pill (e.g., COPY /E * /MT:128 * /J).
+  - Window controls (Pin on Top, Minimize, Close).
+- Center Telemetry & Liquid Plasma Bar (LiquidPlasmaBar.qml):
+  - Hero Readout: 2.14 GB/s (SF Pro Display / Inter SemiBold 26px), live IOPS badge (31,400 IOPS), and smooth ETA (00:00:18).
+  - Recessed Glass Progress Tube (14px height, 7px radius): Filled with an animated shader-driven liquid cyan-blue plasma gradient that casts a soft glow onto the glass surface beneath it, paired with a micro-activity shimmer indicating 128 active Robocopy threads.
+- Bottom Tactile Glass Controls:
+  - [ Pause / Resume ] (Toggles NtSuspendProcess / NtResumeProcess).
+  - [ Robocopy Flags ] (Opens the Radio-Dot & Checkbox Parameter Matrix).
+  - [ Expand Workbench ] (Smoothly morphs the window to 1120px x 740px using SpringAnimation).
+
+### 5.3 Stage 2: The 3-Zone Split-Deck Workbench (WorkbenchSplitView.qml)
+1. Top Zone — Dual-Wave Read/Write Shader Graph:
+   - Displays a smooth cubic-bezier spline graph of Kernel Read Speed (Cyan) and Kernel Write Speed (Indigo-Emerald) over the last 60 seconds, rendered inside a frosted glass well.
+2. Left Rail — Status Filters & Quick Toggles (230px width):
+   - Glass filter pills with live counters:
+     - All Processed
+     - Copied (New / Newer)
+     - Skipped (Same / Older)
+     - Extra Items (*EXTRA)
+     - Failed / Retrying
+   - Quick mid-flight switches:
+     - Post-Copy XXH3 Verify
+     - On Completion: [Keep Open / Close HUD / Sleep PC / Eject Drive]
+3. Center Deck — 120fps Virtualized File Table & Live CLI Bar:
+   - ListView bound to C++ FileTransferListModel with reuseItems: true for locked 120fps scrolling across 1,000,000+ rows.
+   - Columns: Status Glass Pill, Full or Relative Path, File Size, Robocopy Classification, Verification Hash.
+   - Bottom Live Robocopy CLI Pill:
+     - Shows the exact compiled command in real time as the user clicks radio dots and checkboxes:
+       robocopy "D:\Source" "E:\Backup" /E /MT:128 /J /COPY:DAT /DCOPY:DAT /XJ /FFT /R:2 /W:2 /V /NP
+     - Includes [Copy CLI], [Save .BAT / .PS1], and [Run /L Dry-Run Preview] buttons.
+
+### 5.4 The Interactive Robocopy Parameter Matrix Drawer (ParameterMatrixDrawer.qml)
+- Slides over smoothly as a high-blur Liquid Glass sheet containing all 6 Parameter Groups (Group A: Transfer Mode Dots, Group B: Collision Dots, Group C: Access Mode Dots, Group D: /MT:128 & I/O Checkboxes, Group E: Attributes & Links Checkboxes, Group F: Retry & Filter Checkboxes).
+- Every Radio Dot (LiquidRadioDot.qml) and Checkbox (LiquidCheckBox.qml) displays:
+  1. A friendly human title (e.g., "Exclude Junction Loops").
+  2. A glowing monospace flag badge (e.g., /XJ).
+  3. A concise tooltip explaining what it does.
+- Includes a one-click [ Restore Optimal /MT:128 Defaults ] button in the drawer header, plus a preset selector:
+  - Default High-Speed (/MT:128)
+  - Network NAS Sync (/Z /FFT /MT:64)
+  - Exact Mirror Backup (/MIR /ZB)
+  - Admin Full Clone (/COPYALL /ZB)
+
+---
+
+## 6. EXECUTION ORDER FOR CODEX
+Implement the complete C++20 and Qt 6 codebase in the following sequence:
+1. CMakeLists.txt & Shaders: Configure C++20, Qt 6 Quick/ShaderTools, Win32 libraries (ntdll, dwmapi, advapi32, shell32), and write liquid_glass_card.frag and liquid_plasma_bar.frag.
+2. Core Robocopy Parameter Engine: Implement RobocopyProfile.hpp/.cpp (with the /MT:128 Smart Default constructor), RobocopyCommandCompiler.hpp/.cpp, and MultiSourceBatcher.hpp/.cpp.
+3. Pure Robocopy Supervisor & Kernel Telemetry: Implement FastPreScanner.hpp/.cpp, RobocopyProcessSupervisor.hpp/.cpp (including Job Objects, NtSuspendProcess, and Exit Code Bitmask decoding), StdoutPipeParser.hpp/.cpp, and KernelTelemetryPoller.hpp/.cpp (GetProcessIoCounters).
+4. Platform, Verification & Persistence: Implement Win32WindowEffects.cpp, PrivilegeEscalator.cpp, ShellContextMenuRegistrar.cpp, PostCopyHashVerifier.cpp, and SqliteQueueStore.cpp.
+5. Qt 6 C++ Models & Coordinator ViewModel: Implement FileTransferListModel.cpp, TelemetryHistoryModel.hpp, and MainCoordinatorViewModel.cpp.
+6. Liquid Glass QML Frontend: Implement LiquidGlassTheme.qml, LiquidGlassCard.qml, LiquidRadioDot.qml, LiquidCheckBox.qml, LiquidPlasmaBar.qml, CompactHudView.qml, WorkbenchSplitView.qml, ParameterMatrixDrawer.qml, and Main.qml.
+
+Write complete, compilable, production-quality C++20 and QML code across every file.
+================================================================================
+END OF SPECIFICATION FILE
+================================================================================

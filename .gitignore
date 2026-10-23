@@ -1,0 +1,7 @@
+.tools/
+build/
+dist/
+test-output/
+*.user
+*.log
+third_party/qt-licenses/sbom/
