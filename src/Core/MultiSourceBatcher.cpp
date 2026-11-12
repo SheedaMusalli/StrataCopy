@@ -35,6 +35,38 @@ bool MultiSourceBatcher::inside(const QString &path, const QString &parent) {
     return a.compare(b, Qt::CaseInsensitive) == 0 ||
            a.startsWith(b.endsWith('/') ? b : b + '/', Qt::CaseInsensitive);
 }
+BatchPlan MultiSourceBatcher::buildSources(const QStringList &paths, const RobocopyProfile &profile) {
+    BatchPlan plan;
+    plan.errors = profile.validate();
+    if (paths.isEmpty()) {
+        plan.errors << "Add at least one source file or folder.";
+        return plan;
+    }
+    QSet<QString> seen;
+    QMap<QString, int> loose;
+    for (const auto &path : paths) {
+        const QFileInfo info(path);
+        if (!info.exists() || info.isSymLink()) {
+            plan.errors << "Select an existing file or folder: " + path;
+            continue;
+        }
+        const auto source = normalized(path);
+        if (seen.contains(source.toCaseFolded()))
+            continue;
+        seen.insert(source.toCaseFolded());
+        if (info.isDir()) {
+            plan.jobs.append({source, source, {}, false});
+        } else {
+            const auto parent = normalized(info.absolutePath()).toCaseFolded();
+            if (!loose.contains(parent)) {
+                loose[parent] = int(plan.jobs.size());
+                plan.jobs.append({normalized(info.absolutePath()), normalized(info.absolutePath()), {}, true});
+            }
+            plan.jobs[loose[parent]].files << info.fileName();
+        }
+    }
+    return plan;
+}
 BatchPlan MultiSourceBatcher::build(const QStringList &paths, const QString &target,
                                     const RobocopyProfile &profile) {
     BatchPlan plan;

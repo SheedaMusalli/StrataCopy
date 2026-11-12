@@ -9,12 +9,12 @@ class TelemetryHistoryModel : public QObject {
   public:
     using QObject::QObject;
     QVariantList points() const;
-    void append(double read, double write);
+    void append(double write);
     void clear();
   signals:
     void changed();
 
   private:
-    std::deque<QPair<double, double>> m_points;
+    std::deque<double> m_points;
 };
 } // namespace strata

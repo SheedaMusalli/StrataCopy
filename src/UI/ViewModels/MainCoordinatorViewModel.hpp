@@ -1,10 +1,11 @@
 #pragma once
 #include "Core/RobocopyProcessSupervisor.hpp"
-#include "Core/DeletionSupervisor.hpp"
 #include "Core/UpdateChecker.hpp"
 #include "Persistence/SqliteQueueStore.hpp"
 #include "UI/Models/FileTransferListModel.hpp"
 #include "UI/Models/TelemetryHistoryModel.hpp"
+#include "Platform/UniqueHandle.hpp"
+#include <QFileInfo>
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QCoreApplication>
@@ -21,7 +22,6 @@ class MainCoordinatorViewModel : public QObject {
     Q_PROPERTY(QVariantList savedPresets READ savedPresets NOTIFY presetsChanged)
     Q_PROPERTY(QString commandPreview READ commandPreview NOTIFY commandChanged)
     Q_PROPERTY(QString validation READ validation NOTIFY commandChanged)
-    Q_PROPERTY(bool deleting READ deleting NOTIFY stateChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY stateChanged)
     Q_PROPERTY(bool paused READ paused NOTIFY stateChanged)
     Q_PROPERTY(QString phase READ phase NOTIFY stateChanged)
@@ -40,6 +40,7 @@ class MainCoordinatorViewModel : public QObject {
     Q_PROPERTY(QString logPath READ logPath NOTIFY stateChanged)
     Q_PROPERTY(bool defaultCopyHandler READ defaultCopyHandler NOTIFY integrationChanged)
     Q_PROPERTY(bool checkingForUpdates READ checkingForUpdates NOTIFY updateCheckChanged)
+    Q_PROPERTY(bool canRetryElevated READ canRetryElevated NOTIFY stateChanged)
   public:
     explicit MainCoordinatorViewModel(QObject *parent = nullptr);
     ~MainCoordinatorViewModel() override;
@@ -65,12 +66,18 @@ class MainCoordinatorViewModel : public QObject {
     }
     QString commandPreview() const;
     QString validation() const;
-    bool deleting() const {
-        return m_deleting;
-    }
-    Q_INVOKABLE void confirmDeletion();
     bool busy() const {
         return m_busy;
+    }
+    bool requestInProgress() const { return m_busy || m_confirmationPending; }
+    bool canRetryElevated() const {
+        if (m_busy || m_retryInProgress || m_outcome != "error" || m_sources.isEmpty() ||
+            m_runProfile.flag("dryRunListOnly"))
+            return false;
+        for (const auto &source : m_sources)
+            if (!QFileInfo::exists(source))
+                return false;
+        return true;
     }
     bool paused() const {
         return m_paused;
@@ -126,7 +133,9 @@ class MainCoordinatorViewModel : public QObject {
     Q_INVOKABLE void savePreset(const QString &);
     Q_INVOKABLE void loadPreset(int);
     Q_INVOKABLE bool start(bool dryRun = false, bool destructiveConfirmed = false);
+    Q_INVOKABLE bool generateChecksums();
     Q_INVOKABLE void cancel();
+    Q_INVOKABLE bool retryAsAdministrator();
     Q_INVOKABLE void resolveFileConflict(quint64 token, int choice, bool all = false);
     Q_INVOKABLE void togglePause();
     Q_INVOKABLE void setFilter(const QString &category) {
@@ -152,7 +161,7 @@ class MainCoordinatorViewModel : public QObject {
     Q_INVOKABLE void checkForUpdates() {
         m_updateChecker.check();
     }
-    Q_INVOKABLE void completionAction(int);
+    Q_INVOKABLE bool completionAction(int);
     Q_INVOKABLE QString storageType(const QString &) const;
     Q_INVOKABLE QString pathFromUrl(const QUrl &url) const {
         return url.toLocalFile();
@@ -163,7 +172,6 @@ class MainCoordinatorViewModel : public QObject {
     void integrationChanged();
     void updateCheckChanged();
     void updateCheckFinished(QString message);
-    void deletionConfirmationRequired(bool permanent, QStringList paths);
     void fileConflictRequired(QVariantMap conflict);
     void profileChanged();
     void commandChanged();
@@ -187,13 +195,20 @@ class MainCoordinatorViewModel : public QObject {
     QStringList m_sources;
     QString m_destination, m_phase = "Ready to transfer", m_message, m_outcome, m_logPath, m_dataDir;
     bool m_busy = false, m_paused = false, m_storeReady = false;
+    bool m_retryInProgress = false;
+    UniqueHandle m_retryProcess;
+    QTimer m_retryTimer;
     bool m_confirmationPending = false;
-    bool m_explorerRun = false, m_deleting = false, m_permanentDelete = false;
+    bool m_explorerRun = false;
     int m_conflictChoice = -1;
     quint64 m_conflictToken = 0;
     QString m_explorerRequestPath, m_runDestination, m_performanceSummary;
     QTimer m_importTimer;
     QElapsedTimer m_runClock;
+    QElapsedTimer m_graphSampleClock;
+    QElapsedTimer m_statsDisplayClock;
+    double m_smoothedWriteMbps = 0;
+    bool m_hasSmoothedSpeed = false;
     double m_progress = 0;
     quint64 m_totalBytes = 0, m_totalFiles = 0;
     QVariantMap m_stats{{"readMbps", 0}, {"writeMbps", 0}, {"iops", 0}, {"elapsed", 0}};
@@ -204,7 +219,6 @@ class MainCoordinatorViewModel : public QObject {
     TelemetryHistoryModel m_graph;
     QTimer m_flushTimer, m_saveTimer;
     RobocopyProcessSupervisor m_supervisor;
-    DeletionSupervisor m_deletion;
     UpdateChecker m_updateChecker{QCoreApplication::applicationVersion()};
 };
 } // namespace strata

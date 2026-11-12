@@ -1,5 +1,4 @@
 #include "Core/MultiSourceBatcher.hpp"
-#include "Core/DeletionSupervisor.hpp"
 #include "Platform/DriveHardwareDetector.hpp"
 #include "Core/RobocopyCommandCompiler.hpp"
 #include "Core/RobocopyProcessSupervisor.hpp"
@@ -61,8 +60,11 @@ class EngineTests : public QObject {
         QVERIFY(p.validate().isEmpty());
         auto args = RobocopyCommandCompiler::arguments({"C:/source", "D:/dest", {}, false}, p);
         for (const auto &flag :
-             {"/E", "/MT:8", "/COPY:DAT", "/DCOPY:DAT", "/XJ", "/FFT", "/R:2", "/W:2", "/UNICODE"})
+             {"/E", "/MT:8", "/COPY:DAT", "/DCOPY:DAT", "/XJ", "/FFT", "/R:2", "/W:2", "/UNICODE", "/BYTES"})
             QVERIFY2(args.contains(flag), flag);
+        QVERIFY(!args.contains("/V"));
+        QVERIFY(!args.contains("/TS"));
+        QVERIFY(!args.contains("/FP"));
         p.values["enableBandwidthLimit"] = true;
         args = RobocopyCommandCompiler::arguments({"C:/s", "D:/d", {}, false}, p);
         QVERIFY(args.contains("/IPG:10"));
@@ -150,69 +152,6 @@ class EngineTests : public QObject {
             QVERIFY(!preferences.contains("Installer/performanceProfile"));
         }
     }
-    void deletionWorkerLifecycle() {
-        QTemporaryDir temp;
-        DeletionSupervisor deletion;
-        QSignalSpy done(&deletion,&DeletionSupervisor::finished);
-        QVERIFY(!deletion.start({QDir::rootPath()},true));
-        QVERIFY(!deletion.start({"//server/share"},true));
-        QVERIFY(!deletion.start({temp.filePath("missing")},true));
-        QVERIFY(put(temp.filePath("tree/nested/日本語.txt"),"fixture"));
-        QVERIFY(put(temp.filePath("outside/preserve.txt"),"must survive"));
-        QCOMPARE(QProcess::execute("cmd.exe",{"/c","mklink","/J",QDir::toNativeSeparators(temp.filePath("tree/junction")),QDir::toNativeSeparators(temp.filePath("outside"))}),0);
-        QVERIFY(deletion.start({temp.filePath("tree")},true));
-        QVERIFY(done.wait(10000));
-        QVERIFY(done.last()[0].toBool());
-        QVERIFY(!QFileInfo::exists(temp.filePath("tree")));
-        QCOMPARE(read(temp.filePath("outside/preserve.txt")),QByteArray("must survive"));
-        QVERIFY(put(temp.filePath("recycle-fixture.txt"),"own recycle fixture"));
-        done.clear();
-        QVERIFY(deletion.start({temp.filePath("recycle-fixture.txt")},false));
-        QVERIFY(done.wait(10000));
-        QVERIFY(done.last()[0].toBool());
-        QVERIFY(!QFileInfo::exists(temp.filePath("recycle-fixture.txt")));
-        const auto before=handles();
-        for(int i=0;i<20;++i) {
-            QVERIFY(put(temp.filePath("repeat.txt"),"own fixture"));done.clear();
-            QVERIFY(deletion.start({temp.filePath("repeat.txt")},true));
-            QVERIFY(done.wait(10000));QVERIFY(done.last()[0].toBool());
-        }
-        deletion.stopAndWait();
-        QVERIFY(handles()<=before+8);
-        QStringList cancelItems;
-        for(int i=0;i<300;++i){const auto path=temp.filePath(QString("cancel/%1.txt").arg(i));QVERIFY(put(path,"own cancellation fixture"));cancelItems<<path;}
-        done.clear();QVERIFY(deletion.start(cancelItems,true));deletion.cancel();
-        QVERIFY(done.wait(10000));QVERIFY(done.last()[1].toBool());
-        deletion.stopAndWait();
-    }
-    void deletionRequestNeedsConfirmation() {
-        QTemporaryDir temp;
-        const auto old=qgetenv("STRATACOPY_DATA_DIR");
-        qputenv("STRATACOPY_DATA_DIR",temp.filePath("state").toUtf8());
-        const auto guard=qScopeGuard([&]{if(old.isNull())qunsetenv("STRATACOPY_DATA_DIR");else qputenv("STRATACOPY_DATA_DIR",old);});
-        const auto source=temp.filePath("delete-me.txt");
-        const auto request=temp.filePath("state/ExplorerRequests/delete.json");
-        QVERIFY(put(source,"own fixture"));
-        QJsonObject payload{{"operation","delete"},{"sources",QJsonArray{source}}};
-        QVERIFY(put(request,QJsonDocument(payload).toJson()));
-        MainCoordinatorViewModel coordinator;
-        QSignalSpy confirm(&coordinator,&MainCoordinatorViewModel::deletionConfirmationRequired);
-        QSignalSpy complete(&coordinator,&MainCoordinatorViewModel::completedSuccessfully);
-        QVERIFY(coordinator.importExplorerRequest(request));
-        QCOMPARE(confirm.size(),1);QVERIFY(confirm.last()[0].toBool());
-        QVERIFY(!coordinator.busy());QVERIFY(QFileInfo::exists(source));
-        const auto unrelated=temp.filePath("unrelated.txt");QVERIFY(put(unrelated,"must survive"));
-        coordinator.addPaths({unrelated});QCOMPARE(coordinator.sources().size(),1);
-        coordinator.rejectExplorerRequest();QVERIFY(QFileInfo::exists(source));
-        QVERIFY(put(request,QJsonDocument(payload).toJson()));
-        QVERIFY(coordinator.importExplorerRequest(request));
-        coordinator.confirmDeletion();
-        QVERIFY(complete.wait(10000));
-        QVERIFY(!QFileInfo::exists(source));
-        QVERIFY(coordinator.sources().isEmpty());
-        QVERIFY(QFileInfo::exists(unrelated));
-        coordinator.addPaths({unrelated});QVERIFY(!coordinator.deleting());
-    }
     void collisionAndPermissions() {
         RobocopyProfile p;
         p.values["collisionPolicy"] = 2;
@@ -251,6 +190,27 @@ class EngineTests : public QObject {
             !MultiSourceBatcher::build({root + "/folder"}, root + "/folder/new/deep", p).errors.isEmpty());
         p.values["transferMode"] = 5;
         QVERIFY(!MultiSourceBatcher::build({root + "/alpha/a.txt"}, root + "/dest", p).errors.isEmpty());
+    }
+    void moveFolderAndMergeWithoutNesting() {
+        QTemporaryDir temp;
+        QVERIFY(put(temp.filePath("source/folder/nested/a.txt"), "original"));
+        QVERIFY(put(temp.filePath("target/folder/nested/a.txt"), "old"));
+        QVERIFY(put(temp.filePath("target/folder/keep.txt"), "keep"));
+        RobocopyProfile profile;
+        profile.values["transferMode"] = 3;
+        const auto plan = MultiSourceBatcher::build({temp.filePath("source/folder")}, temp.filePath("target"), profile);
+        QVERIFY2(plan.errors.isEmpty(), qPrintable(plan.errors.join(';')));
+        RobocopyProcessSupervisor supervisor;
+        connect(&supervisor, &RobocopyProcessSupervisor::fileConflict, &supervisor,
+                [&](quint64 token, const QString &, const QString &) { supervisor.resolveConflict(token, 0); });
+        QSignalSpy done(&supervisor, &RobocopyProcessSupervisor::finished);
+        QVERIFY(supervisor.start(plan.jobs, profile, temp.filePath("move.log"), true));
+        QVERIFY(awaitRun(done));
+        QVERIFY2(done.last()[0].toBool(), qPrintable(done.last()[2].toString()));
+        QVERIFY(!QFileInfo::exists(temp.filePath("source/folder")));
+        QCOMPARE(read(temp.filePath("target/folder/nested/a.txt")), QByteArray("original"));
+        QCOMPARE(read(temp.filePath("target/folder/keep.txt")), QByteArray("keep"));
+        QVERIFY(!QFileInfo::exists(temp.filePath("target/folder/folder")));
     }
     void argumentQuotingRoundTrip() {
         QStringList originals{"C:\\folder with spaces\\", "quote\"here", "plain", "a&b", "100%", ""};
@@ -542,8 +502,8 @@ class EngineTests : public QObject {
     void boundedGraphAndModel() {
         TelemetryHistoryModel graph;
         for (int i = 0; i < 10000; ++i)
-            graph.append(i, i / 2.0);
-        QCOMPARE(graph.points().size(), 600);
+            graph.append(i / 2.0);
+        QCOMPARE(graph.points().size(), 240);
         FileTransferListModel model;
         model.append({{"C:/a", "New File", "Listed", {}, 100}});
         QCOMPARE(model.rowCount(), 1);

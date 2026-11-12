@@ -4,19 +4,18 @@ Button {
     id: control
     property bool accent: false
     property bool danger: false
-    implicitHeight: 34
-    implicitWidth: Math.max(38,contentItem.implicitWidth+28)
+    implicitHeight: 32
+    implicitWidth: Math.max(40,contentItem.implicitWidth+24)
     font.family: LiquidGlassTheme.font
     font.pixelSize: 12
-    font.weight: Font.DemiBold
+    font.weight: Font.Normal
     hoverEnabled: true
-    opacity: enabled ? 1 : .35
-    contentItem: Text { text: control.text; font: control.font; color: control.accent ? "#061318" : control.danger ? LiquidGlassTheme.red : LiquidGlassTheme.text; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+    opacity: enabled ? 1 : .55
+    contentItem: Text {text: control.text;font: control.font;color: control.accent ? "#101820" : control.danger ? "#ff8792" : "#f1f1f1";horizontalAlignment: Text.AlignHCenter;verticalAlignment: Text.AlignVCenter}
     background: Rectangle {
-        radius: 6
-        color: control.accent ? (control.down ? "#5993db" : control.hovered ? "#9ac5ff" : "#7bb4ff") : (control.down ? "#2e3541" : control.hovered ? "#2b323e" : "#202630")
-        border.color: control.accent ? "#9bc8ff" : control.danger ? "#633447" : "#38414f"
-        border.width: 1
-        Behavior on color { ColorAnimation { duration: 100 } }
+        radius: 3
+        color: control.accent ? (control.down ? "#4c9bd9" : control.hovered ? "#70b6f0" : "#65ade8") : (control.down ? "#484848" : control.hovered ? "#414141" : "#383838")
+        border.color: control.accent ? "#65ade8" : control.danger ? "#8e424a" : "#505050"
+        border.width: control.activeFocus ? 2 : 1
     }
 }

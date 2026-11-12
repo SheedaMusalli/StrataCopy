@@ -51,13 +51,12 @@ template <class T> struct Ref {
 struct Pending {
     std::vector<std::wstring> sources;
     std::wstring destination;
-    bool move{}, remove{};
+    bool move{};
     std::function<HRESULT()> replay;
 };
 struct State {
     std::recursive_mutex mutex;
     std::vector<Pending> pending;
-    DWORD flags = FOF_ALLOWUNDO;
     bool native = false;
     size_t characters = 0, sources = 0;
 };
@@ -385,15 +384,6 @@ HRESULT nativeOnly(IFileOperation *self) noexcept {
     }
 }
 bool compatible(const Pending &operation) {
-    if (operation.remove) {
-        if (operation.sources.empty())
-            return false;
-        for (const auto &source : operation.sources)
-            if (source.size() < 4 || source.back() == L'\\' || source.back() == L'/' ||
-                GetFileAttributesW(source.c_str()) == INVALID_FILE_ATTRIBUTES)
-                return false;
-        return true;
-    }
     if (operation.sources.empty() || operation.destination.empty())
         return false;
     const auto attributes = GetFileAttributesW(operation.destination.c_str());
@@ -443,7 +433,7 @@ HRESULT queue(IFileOperation *self, Pending operation, bool supported) {
                 state.characters + chars <= 80000;
     if (!state.pending.empty()) {
         const auto &first = state.pending.front();
-        supported = supported && first.move == operation.move && first.remove == operation.remove &&
+        supported = supported && first.move == operation.move &&
                     _wcsicmp(first.destination.c_str(), operation.destination.c_str()) == 0;
     }
     if (state.native || !supported) {
@@ -544,9 +534,7 @@ std::wstring jsonString(const std::wstring &s) {
 std::wstring payload(const State &state) {
     const auto &first = state.pending.front();
     std::wstring json = L"{\"native\":true,\"operation\":\"";
-    json += first.remove ? ((state.flags & (FOF_ALLOWUNDO | FOFX_RECYCLEONDELETE)) ? L"recycle" : L"delete")
-            : first.move ? L"move"
-                         : L"copy";
+    json += first.move ? L"move" : L"copy";
     json += L"\",\"destination\":" + jsonString(first.destination) + L",\"sources\":[";
     bool comma = false;
     for (const auto &op : state.pending)
@@ -658,13 +646,19 @@ HRESULT STDMETHODCALLTYPE perform(IFileOperation *self) noexcept {
             std::lock_guard lock(owner->mutex);
             state.pending = std::move(owner->pending);
             state.native = owner->native;
-            state.flags = owner->flags;
         }
         trace("perform-pending", unsigned(state.pending.size()));
         trace("perform-native", state.native);
-        if (!interceptionFault && !state.native && !state.pending.empty() && enabled() &&
-            deliver(payload(state)))
-            return S_OK;
+        if (!interceptionFault && !state.native && !state.pending.empty() && enabled()) {
+            const auto &first = state.pending.front();
+            const wchar_t *action = first.move ? L"move" : L"copy";
+            const auto prompt = std::wstring(L"Use StrataCopy for this ") + action +
+                                L" operation?\n\nYes: StrataCopy\nNo: Windows Copy Handler";
+            const int choice = MessageBoxW(nullptr, prompt.c_str(), L"Choose file handler",
+                                           MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND | MB_TOPMOST);
+            if (choice == IDYES && deliver(payload(state)))
+                return S_OK;
+        }
         auto hr = flush(state);
         return FAILED(hr) ? hr : function<Perform>(21)(self);
     } catch (...) {
@@ -717,56 +711,21 @@ HRESULT STDMETHODCALLTYPE renameMany(IFileOperation *self, IUnknown *p, LPCWSTR 
     NATIVE_GUARD;
     return function<HRESULT(STDMETHODCALLTYPE *)(IFileOperation *, IUnknown *, LPCWSTR)>(13)(self, p, n);
 }
-HRESULT STDMETHODCALLTYPE operationFlags(IFileOperation *self, DWORD flags) {
-    auto result = function<HRESULT(STDMETHODCALLTYPE *)(IFileOperation *, DWORD)>(5)(self, flags);
-    try {
-        if (SUCCEEDED(result) && !replaying) {
-            auto owner = stateFor(self);
-            if (owner) {
-                std::lock_guard lock(owner->mutex);
-                owner->flags = flags;
-            }
-        }
-    } catch (...) {
-        interceptionFault = true;
-    }
-    return result;
-}
 HRESULT STDMETHODCALLTYPE deleteOne(IFileOperation *self, IShellItem *p, IFileOperationProgressSink *sink) {
     using Fn = HRESULT(STDMETHODCALLTYPE *)(IFileOperation *, IShellItem *, IFileOperationProgressSink *);
     if (replaying)
         return function<Fn>(18)(self, p, sink);
-    try {
-        Pending pending;
-        pending.remove = true;
-        auto path = pathOf(p);
-        if (!path.empty())
-            pending.sources.push_back(path);
-        Ref<IShellItem> item(p);
-        Ref<IFileOperationProgressSink> progress(sink);
-        pending.replay = [=] { return function<Fn>(18)(self, item.p, progress.p); };
-        return queue(self, std::move(pending), true);
-    } catch (...) {
-        auto hr = nativeOnly(self);
-        return FAILED(hr) ? hr : function<Fn>(18)(self, p, sink);
-    }
+    // Deletion stays in Windows. Flush any earlier intercepted copy/move first
+    // so mixed Shell batches are replayed together by the original handler.
+    const auto hr = nativeOnly(self);
+    return FAILED(hr) ? hr : function<Fn>(18)(self, p, sink);
 }
 HRESULT STDMETHODCALLTYPE deleteMany(IFileOperation *self, IUnknown *p) {
     using Fn = HRESULT(STDMETHODCALLTYPE *)(IFileOperation *, IUnknown *);
     if (replaying)
         return function<Fn>(19)(self, p);
-    Ref<IUnknown> replaySource(p);
-    try {
-        Pending pending;
-        pending.remove = true;
-        const bool supported = itemPaths(p, pending.sources, replaySource);
-        Ref<IUnknown> items(replaySource);
-        pending.replay = [=] { return function<Fn>(19)(self, items.p); };
-        return queue(self, std::move(pending), supported);
-    } catch (...) {
-        auto hr = nativeOnly(self);
-        return FAILED(hr) ? hr : function<Fn>(19)(self, replaySource.p);
-    }
+    const auto hr = nativeOnly(self);
+    return FAILED(hr) ? hr : function<Fn>(19)(self, p);
 }
 HRESULT STDMETHODCALLTYPE newItem(IFileOperation *self, IShellItem *p, DWORD attr, LPCWSTR n, LPCWSTR t,
                                   IFileOperationProgressSink *sink) {
@@ -806,8 +765,8 @@ bool initialize(bool test) noexcept {
             void *detour;
         };
         Hook hooks[] = {
-            {2, reinterpret_cast<void *>(release)},     {5, reinterpret_cast<void *>(operationFlags)},
-            {8, reinterpret_cast<void *>(properties)},  {10, reinterpret_cast<void *>(applyOne)},
+            {2, reinterpret_cast<void *>(release)},     {8, reinterpret_cast<void *>(properties)},
+            {10, reinterpret_cast<void *>(applyOne)},
             {11, reinterpret_cast<void *>(applyMany)},  {12, reinterpret_cast<void *>(renameOne)},
             {13, reinterpret_cast<void *>(renameMany)}, {14, reinterpret_cast<void *>(moveOne)},
             {15, reinterpret_cast<void *>(moveMany)},   {16, reinterpret_cast<void *>(copyOne)},

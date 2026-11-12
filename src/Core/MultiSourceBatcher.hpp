@@ -14,6 +14,7 @@ struct BatchPlan {
 class MultiSourceBatcher {
   public:
     static BatchPlan build(const QStringList &paths, const QString &target, const RobocopyProfile &profile);
+    static BatchPlan buildSources(const QStringList &paths, const RobocopyProfile &profile);
     static QString normalized(const QString &path);
     static bool inside(const QString &path, const QString &parent);
 };

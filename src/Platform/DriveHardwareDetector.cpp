@@ -78,6 +78,10 @@ int DriveHardwareDetector::recommendedThreads(StorageTier tier, int processors, 
     int threads = 4;
     if (tier == StorageTier::Nvme) threads = std::clamp(processors * 2, 8, 32);
     else if (tier == StorageTier::Ssd || tier == StorageTier::Network) threads = std::clamp(processors, 4, 8);
+    // USB disks are commonly constrained by the storage device rather than the
+    // CPU. Four workers improve overlap for mixed/small-file workloads without
+    // the seek amplification of high /MT values on a spinning external disk.
+    else if (tier == StorageTier::Removable) threads = 4;
     // CPU and RAM guards apply even when a fast drive is attached to a small system.
     threads = std::min(threads, std::max(2, processors * 2));
     if (!memory || memory <= 4ULL * 1024 * 1024 * 1024) threads = std::min(threads, 4);

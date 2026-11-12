@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(StrataCopy VERSION 1.1.0 LANGUAGES C CXX)
+project(StrataCopy VERSION 2.0.0 LANGUAGES C CXX)
 set(CMAKE_INSTALL_BINDIR ".")
 set(CMAKE_INSTALL_LIBDIR ".")
 set(CMAKE_CXX_STANDARD 20)
@@ -13,7 +13,6 @@ find_package(Qt6 6.7 REQUIRED COMPONENTS Core Gui Widgets Quick QuickControls2 S
 qt_standard_project_setup(REQUIRES 6.7)
 add_library(stratacopy_engine STATIC
   src/Core/RobocopyProfile.cpp src/Core/RobocopyCommandCompiler.cpp
-  src/Core/DeletionSupervisor.cpp
   src/Core/UpdateChecker.cpp
   src/Core/MultiSourceBatcher.cpp src/Core/StdoutPipeParser.cpp
   src/Core/KernelTelemetryPoller.cpp src/Core/FastPreScanner.cpp

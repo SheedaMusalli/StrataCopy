@@ -13,7 +13,9 @@
 #include <QUuid>
 #include <shellapi.h>
 #include <oleidl.h>
+#include <cstring>
 #include <memory>
+#include <string>
 #include <vector>
 namespace {
 constexpr wchar_t windowClass[] = L"StrataCopy.ExplorerPaste.Agent.1";
@@ -26,6 +28,34 @@ QString requestDirectory() {
     return qEnvironmentVariable("STRATACOPY_DATA_DIR",
                                 QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)) +
            "/ExplorerRequests";
+}
+bool useWindowsCopyHandler(const ClipboardFiles &files, const QString &destination) {
+    std::vector<wchar_t> from;
+    for (const auto &path : files.paths) {
+        const auto native = QDir::toNativeSeparators(path);
+        from.insert(from.end(), reinterpret_cast<const wchar_t *>(native.utf16()),
+                    reinterpret_cast<const wchar_t *>(native.utf16()) + native.size());
+        from.push_back(L'\0');
+    }
+    from.push_back(L'\0');
+    const auto nativeDestination = QDir::toNativeSeparators(destination);
+    const std::wstring target(reinterpret_cast<const wchar_t *>(nativeDestination.utf16()));
+    SHFILEOPSTRUCTW operation{};
+    operation.wFunc = files.move ? FO_MOVE : FO_COPY;
+    operation.pFrom = from.data();
+    operation.pTo = target.c_str();
+    operation.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR;
+    // This is the explicit Windows choice; briefly suspend StrataCopy's hook so
+    // the shell operation cannot be offered back to us recursively.
+    strata::UniqueHandle enabled(OpenEventW(EVENT_MODIFY_STATE, FALSE,
+                                                L"Local\\StrataCopy.NativeCopy.Enabled.5"));
+    const bool wasEnabled = enabled && WaitForSingleObject(enabled.get(), 0) == WAIT_OBJECT_0;
+    if (wasEnabled)
+        ResetEvent(enabled.get());
+    const int result = SHFileOperationW(&operation);
+    if (wasEnabled)
+        SetEvent(enabled.get());
+    return result == 0 && !operation.fAnyOperationsAborted;
 }
 std::shared_ptr<const ClipboardFiles> readFiles(HWND owner) {
     if (!IsClipboardFormatAvailable(CF_HDROP) || !OpenClipboard(owner))
@@ -139,7 +169,18 @@ int main(int argc, char **argv) {
         if (index + 1 >= arguments.size())
             return 2;
         const auto files = readFiles(nullptr);
-        return files && launchRequest(*files, arguments[index + 1]) ? 0 : 3;
+        if (!files)
+            return 3;
+        const auto destination = arguments[index + 1];
+        const auto action = files->move ? "move" : "copy";
+        const auto prompt = QString("Use StrataCopy for this %1 operation?\n\nYes: StrataCopy\nNo: Windows Copy Handler")
+                                .arg(action);
+        const int choice = MessageBoxW(nullptr, reinterpret_cast<LPCWSTR>(prompt.utf16()),
+                                       L"Choose file handler",
+                                       MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND | MB_TOPMOST);
+        if (choice == IDNO)
+            return useWindowsCopyHandler(*files, destination) ? 0 : 4;
+        return launchRequest(*files, destination) ? 0 : 3;
     }
     strata::UniqueHandle instance;
     const auto deadline = GetTickCount64() + 5000;

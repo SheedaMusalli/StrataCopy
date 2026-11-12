@@ -2,13 +2,14 @@ import QtQuick
 import QtQuick.Controls
 TextField {
     id: field
-    implicitHeight: 34
-    color: LiquidGlassTheme.text
-    placeholderTextColor: "#65748a"
-    selectionColor: "#255a6b"
+    implicitHeight: 32
+    color: "#f2f2f2"
+    placeholderTextColor: "#a0a0a0"
+    selectionColor: "#255a7d"
+    selectedTextColor: "#ffffff"
     font.family: LiquidGlassTheme.font
     font.pixelSize: 12
-    leftPadding: 12
-    rightPadding: 12
-    background: Rectangle { color: "#13171e"; radius: 6; border.color: field.activeFocus ? "#7bb4ff" : "#343c49" }
+    leftPadding: 9
+    rightPadding: 9
+    background: Rectangle {color: field.enabled ? "#252525" : "#303030";radius: 2;border.color: field.activeFocus ? "#65ade8" : "#555555";border.width: field.activeFocus ? 2 : 1}
 }

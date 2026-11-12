@@ -17,13 +17,13 @@ Set-ItemProperty -LiteralPath $taskPreferences -Name notificationAnimations -Val
 New-ItemProperty -LiteralPath $taskPreferences -Name afterCopy -Value 0 -PropertyType DWord -Force | Out-Null
 $taskResult=Start-Process -FilePath $taskSetup -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$taskInstall",'/TASKS=desktopicon,explorermenu,keyboardpaste',"/LOG=$taskRoot\build\installer-test-install.log") -WindowStyle Hidden -Wait -PassThru
 if($taskResult.ExitCode -ne 0){throw "QA install failed: $($taskResult.ExitCode)"}
-foreach($taskFile in @('StrataCopy.exe','StrataCopyExplorer.exe','StrataCopyNative-1.1.0-p5.dll','Qt6Core.dll','unins000.exe','Shortcuts\Programs\StrataCopy.lnk','Shortcuts\Desktop\StrataCopy.lnk')){if(!(Test-Path -LiteralPath (Join-Path $taskInstall $taskFile))){throw "Missing installed file: $taskFile"}}
+foreach($taskFile in @('StrataCopy.exe','StrataCopyExplorer.exe','StrataCopyNative-2.0.0-p5.dll','Qt6Core.dll','unins000.exe','Shortcuts\Programs\StrataCopy.lnk','Shortcuts\Desktop\StrataCopy.lnk')){if(!(Test-Path -LiteralPath (Join-Path $taskInstall $taskFile))){throw "Missing installed file: $taskFile"}}
 $taskVerb=Get-Item -LiteralPath "$taskRegistry\Classes\*\shell\StrataCopy\command"
 if($taskVerb.GetValue('') -notlike '*--add*'){throw 'Copy verb was not registered'}
 $taskPaste=Get-Item -LiteralPath "$taskRegistry\Classes\Directory\Background\shell\StrataCopyPaste\command"
 if($taskPaste.GetValue('') -notlike '*--paste*'){throw 'Paste verb was not registered'}
 if(!(Get-ItemProperty -LiteralPath "$taskRegistry\Run" -Name StrataCopyExplorer).StrataCopyExplorer){throw 'Opt-in startup entry missing'}
-$taskSourceHash=(Get-FileHash -LiteralPath "$taskRoot\dist\StrataCopy-1.1.0\StrataCopy.exe").Hash
+$taskSourceHash=(Get-FileHash -LiteralPath "$taskRoot\dist\StrataCopy-2.0.0\StrataCopy.exe").Hash
 if((Get-FileHash -LiteralPath "$taskInstall\StrataCopy.exe").Hash -ne $taskSourceHash){throw 'Installed executable differs from the release'}
 $taskResult=Start-Process -FilePath "$taskInstall\StrataCopyExplorer.exe" -ArgumentList '--self-test' -WindowStyle Hidden -Wait -PassThru
 if($taskResult.ExitCode -ne 0){throw 'Installed helper self-test failed'}

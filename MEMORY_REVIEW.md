@@ -8,7 +8,7 @@ Reviewed before the first build and execution.
 * Backup and restore privileges are restored at the end of the run, including early returns and exceptions.
 * File events are limited to 16,384 entries and 8 MiB of estimated string payload. The virtualized UI retains at most 1,000,000 rows and 256 MiB of estimated row payload. Container overhead and Qt allocations add to those estimates. Full raw output is streamed to a disk log.
 * At most one telemetry notification is outstanding. The receiving UI acknowledges it; a stalled UI cannot accumulate an unlimited telemetry event backlog.
-* The UTF-16 parser limits an incomplete line to 1 MiB. The graph keeps 600 samples. Hash readers use reusable 1 MiB buffers and scoped hasher states. The pre-scanner walks directories without retaining a file manifest.
+* The UTF-16 parser limits an incomplete line to 1 MiB. The graph keeps 240 numeric samples and is updated at 4 Hz. Hash readers use reusable 1 MiB buffers and scoped hasher states. The pre-scanner walks directories without retaining a file manifest.
 * SQLite connections are closed and removed after their queries have gone out of scope. IPC sockets have QObject ownership, disconnect cleanup, a five-second lifetime limit and a 1 MiB input limit. Qt signal handlers have receiver contexts.
 
 Issues fixed during review: added event byte limits, added a model byte budget, bounded outstanding telemetry, fixed nonexistent-path ancestor resolution, restored privileges after runs, and stopped a transfer if Windows cannot resume it.
@@ -48,6 +48,8 @@ UI revision: conflict decisions retain only a token and one integer on the GUI t
 Tray icon and menu use stack ownership in main; actions belong to the menu and connections have QObject contexts. Normal completion hides the existing window in tray-only mode instead of accumulating window instances. The run destination is retained separately for requested drive-ejection actions after the visible field clears.
 
 Completion notification uses a single stack-owned QWidget, child layouts/labels/button, a single-shot QTimer and one QPropertyAnimation reused on every success. Connections are scoped to the toast QObject. No notification queue, additional worker thread, repeating timer or per-transfer window allocation is introduced. A monotonic QElapsedTimer measures total wall time including pauses and conflict decisions.
+
+The Windows-copy-style QML redesign adds no C++ raw allocations, repeating timers, worker threads, or unbounded UI models. Reusable QML components are owned by the single QQmlApplicationEngine; dialogs, delegates and views are declarative children and are released with their owning window/engine. Existing bounded file and graph models remain unchanged.
 
 Hardware probing uses RAII UniqueHandle for every volume query and fixed stack buffers with returned-size checks before reading device data. Per-transfer source-volume deduplication bounds repeated probes; inventory JSON uses atomic QSaveFile and remains local. No device handle is cached and no polling/background probe thread is added.
 

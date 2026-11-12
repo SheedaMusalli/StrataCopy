@@ -15,7 +15,7 @@ class RobocopyProcessSupervisor : public QObject {
     explicit RobocopyProcessSupervisor(QObject *parent = nullptr) : QObject(parent) {}
     ~RobocopyProcessSupervisor() override;
     bool start(QList<RobocopyInvocation>, RobocopyProfile, const QString &logPath,
-               bool promptConflicts = false);
+               bool promptConflicts = false, bool checksumOnly = false);
     void resolveConflict(quint64 token, int choice);
     void cancel();
     void stopAndWait();
@@ -34,12 +34,13 @@ class RobocopyProcessSupervisor : public QObject {
   signals:
     void phaseChanged(QString);
     void scanned(quint64 bytes, quint64 files, QStringList warnings);
+    void resolvedProfile(QVariantMap values);
     void telemetry(QVariantMap sample);
     void finished(bool success, bool cancelled, QString message);
     void fileConflict(quint64 token, QString source, QString destination);
 
   private:
-    void run(const QList<RobocopyInvocation> &, const RobocopyProfile &, const QString &, bool);
+    void run(const QList<RobocopyInvocation> &, RobocopyProfile, const QString &, bool, bool);
     int askConflict(const QString &source, const QString &destination);
     void enqueue(FileEntry);
     std::atomic_bool m_cancel = false, m_pause = false, m_running = false;

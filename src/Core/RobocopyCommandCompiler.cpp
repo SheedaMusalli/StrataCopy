@@ -114,7 +114,10 @@ QStringList RobocopyCommandCompiler::arguments(const RobocopyInvocation &job, co
         if (!p.string(key).isEmpty())
             args << flag + p.string(key);
     // /UNICODE can emit mixed encoding on stdout. The supervisor tails /UNILOG instead.
-    args << "/V" << "/TS" << "/FP" << "/BYTES" << "/NJH" << "/NJS" << "/NDL" << "/NP" << "/UNICODE";
+    // Avoid /V, /TS and /FP on the hot path: they expand every record and cause extra
+    // formatting, disk writes and parsing on large transfers. /BYTES preserves the
+    // machine-readable size column consumed by StdoutPipeParser.
+    args << "/BYTES" << "/NJH" << "/NJS" << "/NDL" << "/NP" << "/UNICODE";
     if (!unicodeLog.isEmpty())
         args << "/UNILOG:" + QDir::toNativeSeparators(unicodeLog);
     return args;

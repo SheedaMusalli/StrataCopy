@@ -27,6 +27,8 @@
 #include <QQuickItem>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QUuid>
+#include <QProcess>
 #include <cstdio>
 #include <windows.h>
 #include <shellapi.h>
@@ -72,7 +74,7 @@ int main(int argc, char **argv) {
     QApplication app(argc, argv);
     app.setApplicationName("StrataCopy");
     app.setOrganizationName("StrataCopy");
-    app.setApplicationVersion("1.1.0");
+    app.setApplicationVersion("2.0.0");
     app.setWindowIcon(QIcon(":/resources/icons/stratacopy.svg"));
     qInstallMessageHandler(logMessage);
 #ifdef STRATACOPY_UI_TEST_HOOKS
@@ -102,16 +104,26 @@ int main(int argc, char **argv) {
     const auto args = app.arguments();
     QStringList paths;
     QString pasteRequest;
+    bool elevatedInstance = false;
+    QString operationInstance;
     for (int i = 1; i < args.size(); ++i)
         if (args[i] == "--add" && i + 1 < args.size())
             paths << args[++i];
         else if (args[i] == "--paste-request" && i + 1 < args.size())
             pasteRequest = args[++i];
+        else if (args[i] == "--elevated-instance")
+            elevatedInstance = true;
+        else if (args[i] == "--operation-instance" && i + 1 < args.size())
+            operationInstance = args[++i];
     const auto identity =
         QCryptographicHash::hash(qgetenv("USERNAME") + qgetenv("USERDOMAIN"), QCryptographicHash::Sha256)
             .toHex()
             .left(16);
     auto serverName = "StrataCopy-" + QString::fromLatin1(identity);
+    if (elevatedInstance)
+        serverName += "-elevated";
+    if (!operationInstance.isEmpty())
+        serverName += "-operation-" + operationInstance;
     // Explicit data directories are independent instances, including isolated QA.
     // A native request must never be forwarded into another installation's journal.
     serverName +=
@@ -171,6 +183,8 @@ int main(int argc, char **argv) {
         return 1;
     if (QGuiApplication::platformName() != "offscreen")
         strata::Win32WindowEffects::apply(window);
+    if (!operationInstance.isEmpty())
+        window->setProperty("forceTransferWindow", true);
     // Stack ownership keeps the menu, actions and native tray icon bounded to the application lifetime.
     QMenu trayMenu;
     auto *openAction = trayMenu.addAction("Open StrataCopy");
@@ -184,24 +198,28 @@ int main(int argc, char **argv) {
     QSystemTrayIcon tray(QIcon(":/resources/icons/stratacopy.svg"));
     tray.setToolTip("StrataCopy");
     tray.setContextMenu(&trayMenu);
-    const bool trayAvailable = QSystemTrayIcon::isSystemTrayAvailable();
+    // Concurrent Explorer requests run in their own short-lived windows. They
+    // must not each register a persistent-looking tray icon.
+    const bool trayAvailable = operationInstance.isEmpty() && QSystemTrayIcon::isSystemTrayAvailable();
     if (trayAvailable) tray.show();
     else window->setProperty("transferOnly", false);
-    app.setQuitOnLastWindowClosed(!trayAvailable || !window->property("transferOnly").toBool());
+    app.setQuitOnLastWindowClosed(!operationInstance.isEmpty() || !trayAvailable ||
+                                  !window->property("transferOnly").toBool());
     const auto reveal = [window] {window->showNormal();window->raise();window->requestActivate();};
-    QObject::connect(openAction, &QAction::triggered, &app, reveal);
-    QObject::connect(settingsAction, &QAction::triggered, &app, [window, reveal] {
-        reveal();
+    const auto revealFromTray = [window, reveal] {window->setProperty("openedFromTray", true); reveal();};
+    QObject::connect(openAction, &QAction::triggered, &app, revealFromTray);
+    QObject::connect(settingsAction, &QAction::triggered, &app, [window, revealFromTray] {
+        revealFromTray();
         QMetaObject::invokeMethod(window, "setUiTestState", Q_ARG(QVariant, "parameters"));
     });
-    QObject::connect(&tray, &QSystemTrayIcon::activated, &app, [reveal](QSystemTrayIcon::ActivationReason reason) {
-        if (reason == QSystemTrayIcon::DoubleClick) reveal();
+    QObject::connect(&tray, &QSystemTrayIcon::activated, &app, [revealFromTray](QSystemTrayIcon::ActivationReason reason) {
+        if (reason == QSystemTrayIcon::DoubleClick) revealFromTray();
     });
     QObject::connect(transferOnlyAction, &QAction::toggled, &app, [&](bool enabled) {
         window->setProperty("transferOnly", enabled && trayAvailable);
         app.setQuitOnLastWindowClosed(!enabled || !trayAvailable);
         if (enabled && trayAvailable && !coordinator.busy()) window->hide();
-        else reveal();
+        else revealFromTray();
     });
     QObject::connect(exitAction, &QAction::triggered, &app, &QCoreApplication::quit);
     bool previouslyBusy = coordinator.busy();
@@ -217,9 +235,9 @@ int main(int argc, char **argv) {
     toast.setWindowTitle("StrataCopy — Transfer complete");
     toast.setAttribute(Qt::WA_ShowWithoutActivating);
     toast.setObjectName("completionToast");
-    toast.setStyleSheet("QWidget#completionToast {background:#19232d;border:1px solid #3b5965;border-radius:9px;}"
-                        "QLabel {color:#e3eff3;background:transparent;border:none;}"
-                        "QPushButton {color:#8da5b3;background:transparent;border:none;font-size:18px;}");
+    toast.setStyleSheet("QWidget#completionToast {background:#292929;border:1px solid #4a4a4a;border-radius:4px;}"
+                        "QLabel {color:#f0f0f0;background:transparent;border:none;}"
+                        "QPushButton {color:#d0d0d0;background:transparent;border:none;font-size:18px;}");
     toast.setFixedSize(340, 96);
     QHBoxLayout toastLayout(&toast);
     toastLayout.setContentsMargins(16, 14, 12, 14);
@@ -228,9 +246,9 @@ int main(int argc, char **argv) {
     toastLayout.addWidget(&toastIcon);
     QVBoxLayout toastText;
     QLabel toastTitle("Transfer complete");
-    toastTitle.setStyleSheet("font-size:14px;font-weight:600;color:#c2f2df;");
+    toastTitle.setStyleSheet("font-size:14px;font-weight:600;color:#f2f2f2;");
     QLabel toastDuration;
-    toastDuration.setStyleSheet("font-size:12px;color:#a9bdcc;");
+    toastDuration.setStyleSheet("font-size:12px;color:#c1c1c1;");
     toastText.addWidget(&toastTitle);
     toastText.addWidget(&toastDuration);
     toastLayout.addLayout(&toastText, 1);
@@ -276,7 +294,7 @@ int main(int argc, char **argv) {
             ? QString("%1 second%2").arg(seconds).arg(seconds == 1 ? "" : "s")
             : seconds < 3600 ? QString("%1m %2s").arg(seconds / 60).arg(seconds % 60)
                              : QString("%1h %2m %3s").arg(seconds / 3600).arg((seconds / 60) % 60).arg(seconds % 60);
-        toastTitle.setText(coordinator.deleting()?"Deletion complete":"Transfer complete");
+        toastTitle.setText("Transfer complete");
         toastDuration.setText("Completed in " + duration);
         const auto *screen = window->screen() ? window->screen() : app.primaryScreen();
         if (!screen) return;
@@ -370,8 +388,16 @@ int main(int argc, char **argv) {
                     coordinator.addPaths(paths);
                     if (doc.isObject()) {
                         const auto request = doc.object().value("pasteRequest").toString();
-                        if (QFileInfo::exists(request))
-                            coordinator.importExplorerRequest(request);
+                        if (QFileInfo::exists(request)) {
+                            if (coordinator.requestInProgress()) {
+                                const auto instanceId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+                                QProcess::startDetached(
+                                    QCoreApplication::applicationFilePath(),
+                                    {"--paste-request", request, "--operation-instance", instanceId});
+                            } else {
+                                coordinator.importExplorerRequest(request);
+                            }
+                        }
                     }
                     const bool explorerRequest = doc.isObject() && !doc.object().value("pasteRequest").toString().isEmpty();
                     if (explorerRequest || coordinator.busy() || !window->property("transferOnly").toBool()) {

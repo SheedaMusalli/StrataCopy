@@ -1,6 +1,6 @@
-# StrataCopy v1.1.0 validation
+# StrataCopy validation records
 
-Release environment: Windows x64, Qt 6.8.3, MinGW 13.1, Release configuration. Timed UI test hooks are disabled in the distributable.
+The required engine/native checks recorded below were run for v1.1.0. For v2.0.0, the Release application and helper compiled with Qt 6.8.3 / MinGW 13.1, deployment completed, and the installer compiled with Inno Setup 6.7.3. Tests were not run for this build. Timed UI test hooks are disabled in the distributable.
 
 ## Required checks
 
@@ -20,7 +20,7 @@ Registry objects and stop-request processes are scoped. Window filters unregiste
 
 The isolated regression installs all optional tasks, checks executable hashes, shortcuts and registrations, runs the deployed helper self-test, upgrades without respecifying tasks, and uninstalls. It verifies cleanup and asserts that the real startup registration is unchanged. The QA installer uses a separate identity and registry namespace.
 
-The production app, helper, Windows version resource, manifest, deployment folder and installer identify the product as 1.1.0. Native protocol generations are internal compatibility identifiers, not product release versions.
+For v1.1.0, the production app, helper, Windows version resource, manifest, deployment folder and installer identified the product as 1.1.0. The v2.0.0 build identifies the production app, helper, Windows version resource, manifest, deployment folder and installer as 2.0.0. Native protocol generations are internal compatibility identifiers, not product release versions.
 
 ## Practical limits
 

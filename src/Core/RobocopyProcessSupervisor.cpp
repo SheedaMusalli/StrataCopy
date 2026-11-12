@@ -1,6 +1,7 @@
 #include "RobocopyProcessSupervisor.hpp"
 #include "FastPreScanner.hpp"
 #include "KernelTelemetryPoller.hpp"
+#include "Platform/DriveHardwareDetector.hpp"
 #include "Platform/PrivilegeEscalator.hpp"
 #include "Platform/UniqueHandle.hpp"
 #include "Verification/PostCopyHashVerifier.hpp"
@@ -36,7 +37,7 @@ void RobocopyProcessSupervisor::stopAndWait() {
         m_worker.join();
 }
 bool RobocopyProcessSupervisor::start(QList<RobocopyInvocation> jobs, RobocopyProfile profile,
-                                      const QString &logPath, bool promptConflicts) {
+                                      const QString &logPath, bool promptConflicts, bool checksumOnly) {
     if (m_running.exchange(true))
         return false;
     if (m_worker.joinable())
@@ -52,9 +53,9 @@ bool RobocopyProcessSupervisor::start(QList<RobocopyInvocation> jobs, RobocopyPr
     }
     try {
         m_worker = std::thread(
-            [this, jobs = std::move(jobs), profile = std::move(profile), logPath, promptConflicts] {
+            [this, jobs = std::move(jobs), profile = std::move(profile), logPath, promptConflicts, checksumOnly] {
                 try {
-                    run(jobs, profile, logPath, promptConflicts);
+                    run(jobs, profile, logPath, promptConflicts, checksumOnly);
                 } catch (const std::exception &e) {
                     m_running = false;
                     emit finished(false, m_cancel.load(), QString::fromUtf8(e.what()));
@@ -142,13 +143,50 @@ QString RobocopyProcessSupervisor::decodeExitCode(quint32 code) {
         parts << "Unexpected exit code";
     return parts.join(" · ");
 }
-void RobocopyProcessSupervisor::run(const QList<RobocopyInvocation> &jobs, const RobocopyProfile &profile,
-                                    const QString &logPath, bool promptConflicts) {
+void RobocopyProcessSupervisor::run(const QList<RobocopyInvocation> &jobs, RobocopyProfile profile,
+                                    const QString &logPath, bool promptConflicts, bool checksumOnly) {
+    // Source enumeration can touch hundreds of thousands of files on a USB
+    // disk. Run this coordinator thread at background I/O priority so a long
+    // pre-scan yields to foreground applications and system work.
+    SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
+    const auto restoreThreadPriority = qScopeGuard([] {
+        SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_END);
+    });
+    if (profile.number("performanceMode") == 0) {
+        QStringList sources;
+        for (const auto &job : jobs)
+            sources << job.source;
+        int threads = 32;
+        if (jobs.isEmpty()) {
+            threads = DriveHardwareDetector::recommendedThreads(
+                StorageTier::Unknown, DriveHardwareDetector::logicalProcessors(),
+                DriveHardwareDetector::memoryBytes());
+        } else {
+            // Multi-source/multi-destination operations must respect the
+            // slowest volume in every Robocopy batch, not just the first one.
+            for (const auto &job : jobs)
+                threads = std::min(threads, DriveHardwareDetector::transferThreads(
+                    {job.source}, job.destination, profile.values));
+        }
+        profile.values["threadCount"] = threads;
+        emit resolvedProfile(profile.values);
+    }
     const bool interactive = promptConflicts && !profile.flag("dryRunListOnly");
     auto complete = [&](bool ok, QString message) {
         m_running = false;
         emit finished(ok && !m_cancel.load(), m_cancel.load(), std::move(message));
     };
+    // Backup privileges must be enabled before both the pre-scan and any same-volume
+    // fast moves; enabling them only before CreateProcess leaves protected paths
+    // inaccessible to the earlier filesystem work.
+    PrivilegeEscalator privileges;
+    if (profile.number("accessMode") >= 2) {
+        const auto error = privileges.enableBackupRestore();
+        if (!error.isEmpty()) {
+            complete(false, error);
+            return;
+        }
+    }
     QFile log(logPath);
     if (!log.open(QIODevice::WriteOnly | QIODevice::Append)) {
         complete(false, "Cannot open the transfer log: " + log.errorString());
@@ -159,10 +197,171 @@ void RobocopyProcessSupervisor::run(const QList<RobocopyInvocation> &jobs, const
         return log.write(data) == data.size();
     };
     emit phaseChanged("Scanning sources");
+    if (checksumOnly) {
+        quint64 generated = 0, failed = 0;
+        emit scanned(0, 0, {});
+        for (const auto &job : jobs) {
+            const auto result = PostCopyHashVerifier::generate(job, profile, m_cancel, [&](FileEntry e) {
+                writeLog(e.state + " " + e.path + " " + e.hash + " " + e.classification);
+                enqueue(std::move(e));
+            });
+            generated += result.verified;
+            failed += result.failed;
+            if (result.cancelled)
+                break;
+        }
+        if (m_cancel.load())
+            complete(false, "Checksum generation cancelled.");
+        else
+            complete(failed == 0, QString("Checksum generation complete · %1 files · %2 failures")
+                                      .arg(generated).arg(failed));
+        return;
+    }
     quint64 total = 0, count = 0;
     QStringList warnings;
+    auto work = jobs;
+    std::function<void(const QString &)> removeEmptyFolders;
+    removeEmptyFolders = [&](const QString &path) {
+        QDir dir(path);
+        const auto entries = dir.entryInfoList(QDir::Dirs | QDir::Hidden | QDir::System |
+                                                QDir::NoDotAndDotDot, QDir::NoSort);
+        for (const auto &entry : entries)
+            if (!entry.isSymLink())
+                removeEmptyFolders(entry.absoluteFilePath());
+        if (QDir(path).entryList(QDir::AllEntries | QDir::Hidden | QDir::System |
+                                 QDir::NoDotAndDotDot).isEmpty() && QDir().rmdir(path))
+            writeLog("Removed empty source folder after move: " + path);
+    };
+    // A same-volume move is a directory entry rename. Robocopy /MOVE always
+    // reads and rewrites file contents, which is especially wasteful on large trees.
+    if (!profile.flag("dryRunListOnly") &&
+        (profile.mode() == TransferMode::MoveTree || profile.mode() == TransferMode::MoveFiles)) {
+        auto sameVolume = [](const QString &from, const QString &to) {
+            wchar_t fromVolume[MAX_PATH]{}, toVolume[MAX_PATH]{};
+            auto existingPath = [](QString path) {
+                path = QFileInfo(path).absoluteFilePath();
+                while (!QFileInfo::exists(path)) {
+                    const auto parent = QFileInfo(path).absolutePath();
+                    if (parent == path)
+                        return QString();
+                    path = parent;
+                }
+                return path;
+            };
+            const auto fromPath = QDir::toNativeSeparators(existingPath(from));
+            const auto toPath = QDir::toNativeSeparators(existingPath(to));
+            return !fromPath.isEmpty() && !toPath.isEmpty() &&
+                   GetVolumePathNameW(reinterpret_cast<LPCWSTR>(fromPath.utf16()), fromVolume, MAX_PATH) &&
+                   GetVolumePathNameW(reinterpret_cast<LPCWSTR>(toPath.utf16()), toVolume, MAX_PATH) &&
+                   _wcsicmp(fromVolume, toVolume) == 0;
+        };
+        std::function<bool(const QString &, const QString &)> mergeMoveTree;
+        mergeMoveTree = [&](const QString &sourceDir, const QString &destinationDir) {
+            if (!QDir().mkpath(destinationDir))
+                return false;
+            bool complete = true;
+            QDir source(sourceDir);
+            const auto entries = source.entryInfoList(QDir::AllEntries | QDir::Hidden | QDir::System |
+                                                       QDir::NoDotAndDotDot, QDir::NoSort);
+            for (const auto &entry : entries) {
+                if (m_cancel.load())
+                    return false;
+                const auto fromPath = entry.absoluteFilePath();
+                const auto toPath = QDir(destinationDir).filePath(entry.fileName());
+                if (entry.isDir() && !entry.isSymLink()) {
+                    if (QFileInfo::exists(toPath)) {
+                        if (!QFileInfo(toPath).isDir() || !mergeMoveTree(fromPath, toPath)) {
+                            complete = false;
+                            continue;
+                        }
+                        if (!QFileInfo::exists(fromPath) || QDir().rmdir(fromPath))
+                            writeLog("Removed empty source folder after merge: " + fromPath);
+                        else
+                            complete = false;
+                        continue;
+                    }
+                } else if (QFileInfo::exists(toPath)) {
+                    complete = false;
+                    continue; // Preserve conflicts for Robocopy's configured policy/prompt.
+                }
+                const auto nativeFrom = QDir::toNativeSeparators(fromPath);
+                const auto nativeTo = QDir::toNativeSeparators(toPath);
+                if (MoveFileExW(reinterpret_cast<LPCWSTR>(nativeFrom.utf16()),
+                                reinterpret_cast<LPCWSTR>(nativeTo.utf16()), MOVEFILE_WRITE_THROUGH)) {
+                    writeLog("Moved on same volume: " + fromPath + " -> " + toPath);
+                    enqueue({toPath, "Moved on same volume", "Moved", {},
+                             entry.isDir() ? 0 : quint64(qMax<qint64>(0, entry.size()))});
+                    ++count;
+                } else {
+                    complete = false;
+                }
+            }
+            if (QDir(sourceDir).entryList(QDir::AllEntries | QDir::Hidden | QDir::System |
+                                         QDir::NoDotAndDotDot).isEmpty() && !QDir().rmdir(sourceDir))
+                complete = false;
+            return complete;
+        };
+        for (auto it = work.begin(); it != work.end() && !m_cancel.load();) {
+            if (!sameVolume(it->source, it->destination)) {
+                ++it;
+                continue;
+            }
+            if (!it->looseFiles) {
+                if (profile.mode() == TransferMode::MoveFiles) {
+                    ++it;
+                    continue; // /MOV keeps the directory tree; only leaf files can be renamed here.
+                }
+                // Explorer merges a moved folder with an existing same-name folder.
+                // Rename a whole tree when possible; recursively move only missing
+                // entries when the destination folder already exists.
+                // Folder jobs already contain the final destination, including
+                // the source folder name, as built by MultiSourceBatcher.
+                const QString target = it->destination;
+                const auto source = QDir::toNativeSeparators(it->source);
+                const auto nativeTarget = QDir::toNativeSeparators(target);
+                if (!QFileInfo::exists(target) &&
+                    MoveFileExW(reinterpret_cast<LPCWSTR>(source.utf16()),
+                                reinterpret_cast<LPCWSTR>(nativeTarget.utf16()), MOVEFILE_WRITE_THROUGH)) {
+                    writeLog("Moved on same volume: " + it->source + " -> " + target);
+                    enqueue({target, "Moved on same volume", "Moved", {}, 0});
+                    ++count;
+                } else if (QFileInfo(target).isDir() && mergeMoveTree(it->source, target)) {
+                    writeLog("Merged same-volume move into: " + target);
+                } else {
+                    ++it;
+                    continue;
+                }
+                it = work.erase(it);
+                continue;
+            }
+            for (auto file = it->files.begin(); file != it->files.end();) {
+                const auto sourcePath = QDir(it->source).filePath(*file);
+                // Loose selected files are pasted directly into the chosen target;
+                // only folder jobs append their source folder name.
+                const auto destinationPath = QDir(it->destination).filePath(*file);
+                const auto fileSize = quint64(qMax<qint64>(0, QFileInfo(sourcePath).size()));
+                const auto source = QDir::toNativeSeparators(sourcePath);
+                const auto destination = QDir::toNativeSeparators(destinationPath);
+                if (!QFileInfo::exists(destinationPath) &&
+                    MoveFileExW(reinterpret_cast<LPCWSTR>(source.utf16()),
+                                reinterpret_cast<LPCWSTR>(destination.utf16()), MOVEFILE_WRITE_THROUGH)) {
+                    writeLog("Moved instantly on the same volume: " + sourcePath + " -> " + destinationPath);
+                    enqueue({destinationPath, "Moved on same volume", "Moved", {},
+                             fileSize});
+                    ++count;
+                    file = it->files.erase(file);
+                } else {
+                    ++file;
+                }
+            }
+            if (it->files.isEmpty())
+                it = work.erase(it);
+            else
+                ++it;
+        }
+    }
     std::vector<std::unique_ptr<QTemporaryFile>> manifests;
-    for (const auto &job : jobs) {
+    for (const auto &job : work) {
         auto scanProfile = profile;
         std::unique_ptr<QTemporaryFile> manifest;
         bool manifestFailed = false;
@@ -205,14 +404,6 @@ void RobocopyProcessSupervisor::run(const QList<RobocopyInvocation> &jobs, const
         }
     }
     emit scanned(total, count, warnings);
-    PrivilegeEscalator privileges;
-    if (profile.number("accessMode") >= 2) {
-        const auto error = privileges.enableBackupRestore();
-        if (!error.isEmpty()) {
-            complete(false, error);
-            return;
-        }
-    }
     quint64 cumulativeWritten = 0, cumulativeRead = 0;
     quint32 exitBits = 0;
     QElapsedTimer elapsed;
@@ -235,11 +426,11 @@ void RobocopyProcessSupervisor::run(const QList<RobocopyInvocation> &jobs, const
     const auto ntdll = GetModuleHandleW(L"ntdll.dll");
     auto suspend = std::bit_cast<NtProcessFn>(GetProcAddress(ntdll, "NtSuspendProcess"));
     auto resume = std::bit_cast<NtProcessFn>(GetProcAddress(ntdll, "NtResumeProcess"));
-    for (qsizetype index = 0; index < jobs.size(); ++index) {
+    for (qsizetype index = 0; index < work.size(); ++index) {
         bool bulk = true;
         auto *manifest = manifests[size_t(index)].get();
         while (bulk || (manifest && !manifest->atEnd())) {
-            auto currentJob = jobs[index];
+            auto currentJob = work[index];
             auto currentProfile = profile;
             QString conflictSource, conflictDestination;
             quint64 conflictSize = 0;
@@ -322,7 +513,7 @@ void RobocopyProcessSupervisor::run(const QList<RobocopyInvocation> &jobs, const
             }
             emit phaseChanged(currentProfile.flag("dryRunListOnly")
                                   ? "Dry-run preview"
-                                  : QString("Transferring · job %1 of %2").arg(index + 1).arg(jobs.size()));
+                                  : QString("Transferring · job %1 of %2").arg(index + 1).arg(work.size()));
             SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
             HANDLE readRaw = nullptr, writeRaw = nullptr;
             if (!CreatePipe(&readRaw, &writeRaw, &security, 1024 * 1024)) {
@@ -398,6 +589,10 @@ void RobocopyProcessSupervisor::run(const QList<RobocopyInvocation> &jobs, const
                 complete(false, error);
                 return;
             }
+            // Background mode reduces contention with foreground applications and
+            // system work. This is especially useful while a game is active or the
+            // machine is trying to shut down, without throttling transfer I/O itself.
+            SetPriorityClass(process.get(), BELOW_NORMAL_PRIORITY_CLASS | PROCESS_MODE_BACKGROUND_BEGIN);
             writePipe.reset();
             input.reset();
             KernelTelemetryPoller poller;
@@ -407,7 +602,7 @@ void RobocopyProcessSupervisor::run(const QList<RobocopyInvocation> &jobs, const
                 return;
             }
             thread.reset();
-            bool suspended = false, logFailed = false;
+            bool suspended = false, logFailed = false, operationError = false;
             QString pauseError;
             QElapsedTimer pauseClock, reportClock;
             reportClock.start();
@@ -417,6 +612,8 @@ void RobocopyProcessSupervisor::run(const QList<RobocopyInvocation> &jobs, const
                     logFailed = true;
                 if (entry) {
                     auto e = *entry;
+                    if (e.state == "Failed")
+                        operationError = true;
                     const auto classification = e.classification.toLower();
                     if (e.state != "Failed" && e.state != "Extra") {
                         if (currentProfile.number("collisionPolicy") == 3 &&
@@ -544,6 +741,10 @@ void RobocopyProcessSupervisor::run(const QList<RobocopyInvocation> &jobs, const
                 complete(false, QString("Robocopy exit %1: %2").arg(code).arg(decodeExitCode(code)));
                 return;
             }
+            if (operationError) {
+                complete(false, "Windows reported an error during the move or copy. Some source items may remain. Check the log and retry as administrator if access was denied.");
+                return;
+            }
             if (staging) {
                 const auto staged = QDir(staging->path()).filePath(QFileInfo(conflictSource).fileName());
                 const auto name = QFileInfo(conflictDestination).fileName();
@@ -579,6 +780,15 @@ void RobocopyProcessSupervisor::run(const QList<RobocopyInvocation> &jobs, const
         }
         if (m_cancel.load())
             break;
+        if (!profile.flag("dryRunListOnly") && profile.mode() == TransferMode::MoveTree &&
+            !work[index].looseFiles && QFileInfo(work[index].source).isDir()) {
+            removeEmptyFolders(work[index].source);
+            if (QFileInfo::exists(work[index].source)) {
+                complete(false, "Move incomplete: the source folder still contains items or Windows could not remove it: " +
+                                    work[index].source + ". Check the log and any skipped conflicts.");
+                return;
+            }
+        }
     }
     if (m_cancel.load()) {
         complete(false, "Transfer cancelled. Completed copies remain at the destination.");
@@ -593,7 +803,7 @@ void RobocopyProcessSupervisor::run(const QList<RobocopyInvocation> &jobs, const
     if (profile.flag("verifyHashPostCopy") && !profile.flag("dryRunListOnly")) {
         emit phaseChanged("Verifying file hashes");
         quint64 failed = 0, verified = 0;
-        for (const auto &job : jobs) {
+        for (const auto &job : work) {
             auto result = PostCopyHashVerifier::verify(job, profile, m_cancel, [&](FileEntry e) {
                 writeLog(e.state + " " + e.path + " " + e.hash + " " + e.classification);
                 enqueue(std::move(e));

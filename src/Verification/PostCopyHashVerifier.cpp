@@ -107,4 +107,40 @@ VerificationResult PostCopyHashVerifier::verify(const RobocopyInvocation &job, c
     result.cancelled = cancel.load();
     return result;
 }
+VerificationResult PostCopyHashVerifier::generate(const RobocopyInvocation &job, const RobocopyProfile &p,
+                                                  const std::atomic_bool &cancel,
+                                                  const std::function<void(FileEntry)> &sink) {
+    VerificationResult result;
+    const auto scan = FastPreScanner::scan(job, p, cancel, [&](const QString &source, const QString &, quint64 size) {
+        QString error;
+        const auto digest = hashFile(source, p.number("hashAlgorithm"), cancel, error);
+        if (cancel.load())
+            return false;
+        bool ok = error.isEmpty();
+        if (ok && p.flag("writeSidecars")) {
+            const auto extension = QStringList{".xxh3", ".blake3", ".sha256"}[p.number("hashAlgorithm")];
+            const auto sidecarPath = source + extension;
+            if (QFileInfo::exists(sidecarPath)) {
+                error = "Sidecar already exists; preserved";
+            } else {
+                QSaveFile sidecar(sidecarPath);
+                const auto contents = digest + "  " + QFileInfo(source).fileName().toUtf8() + "\n";
+                if (!sidecar.open(QIODevice::WriteOnly) || sidecar.write(contents) != contents.size() ||
+                    !sidecar.commit())
+                    error = "Cannot write hash sidecar";
+            }
+        }
+        ok = error.isEmpty();
+        sink({source, ok ? "Checksum generated" : error,
+              ok ? "Verified" : "Failed", QString::fromLatin1(digest), size});
+        ok ? ++result.verified : ++result.failed;
+        return true;
+    });
+    if (!scan.warnings.isEmpty()) {
+        ++result.failed;
+        sink({job.source, scan.warnings.join("; "), "Failed", {}, 0});
+    }
+    result.cancelled = cancel.load();
+    return result;
+}
 } // namespace strata

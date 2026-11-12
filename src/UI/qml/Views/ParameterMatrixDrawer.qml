@@ -13,13 +13,13 @@ Drawer {
     property var threadChoices: [0,1,2,4,8,12,16,24,32,48,64,96,128]
     function openPresetPopup() {presets.popup.open()}
     onOpened: appState.refreshIntegration()
-    background: Rectangle {color: "#171c24";border.color: "#364151";radius: 8}
+    background: Rectangle {color: "#2b2b2b";border.color: "#555555"}
     ColumnLayout {
-        anchors.fill: parent;anchors.margins: 18;spacing: 12
+        anchors.fill: parent;anchors.margins: 14;spacing: 9
         RowLayout {
             Layout.fillWidth: true;Layout.maximumHeight: 30
             Text {
-                text: "Transfer settings";font.pixelSize: 18;font.weight: Font.DemiBold;color: "#e8eef8";Layout.fillWidth: true
+                text: "Transfer settings";font.pixelSize: 16;font.weight: Font.Medium;color: "#f2f2f2";Layout.fillWidth: true
                 MouseArea {objectName: "settingsWindowDrag";anchors.fill: parent;onPressed: drawer.moveWindowRequested()}
             }
             GlassButton {text: "Done";implicitHeight: 30;onClicked: drawer.close()}
@@ -31,26 +31,26 @@ Drawer {
         }
         LiquidCheckBox {
             Layout.fillWidth: true
-            text: "Use StrataCopy for Explorer copy, move and delete"
+            text: "Use StrataCopy for Explorer copy and move"
             checked: appState.defaultCopyHandler
             enabled: !appState.busy
             onClicked: {appState.setKeyboardPasteIntegration(checked);drawer.integrationFeedback=appState.message}
         }
         Text {
             Layout.fillWidth: true;wrapMode: Text.WordWrap
-            text: "Handles Explorer paste, drag-and-drop and Delete. Uncheck to use Windows for these operations."
-            color: "#8b9bb2";font.pixelSize: 10
+            text: "Handles Explorer copy and move. Windows handles delete and recycle. Uncheck to use Windows for copy and move too."
+            color: "#bcbcbc";font.pixelSize: 10
         }
         Text {
             visible: drawer.integrationFeedback.length > 0
             Layout.fillWidth: true;wrapMode: Text.WordWrap
-            text: drawer.integrationFeedback;color: "#a9cfff";font.pixelSize: 10
+            text: drawer.integrationFeedback;color: "#9cc9ec";font.pixelSize: 10
         }
         ModernComboBox {
             id: categories;Layout.fillWidth: true
             model: appState.parameterGroups.map(group => group.title.replace(/^[A-Z] \/ /,"" )).concat(["Saved presets"])
         }
-        Rectangle {Layout.fillWidth: true;height: 1;color: "#303947"}
+        Rectangle {Layout.fillWidth: true;height: 1;color: "#474747"}
         ScrollView {
             id: settingsScroll
             Layout.fillWidth: true;Layout.fillHeight: true;clip: true;contentWidth: availableWidth
@@ -58,15 +58,15 @@ Drawer {
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             ColumnLayout {
                 width: settingsScroll.availableWidth-10;spacing: 2
-                Text {text: appState.performanceSummary;Layout.fillWidth: true;wrapMode: Text.WordWrap;color: "#9eb6c8";font.pixelSize: 11}
-                Text {text: "Threads by storage type";color: "#dce5f3";font.pixelSize: 13}
-                Text {text: "Used by Auto. The lower source/destination limit wins. Custom values override hardware limits.";Layout.fillWidth: true;wrapMode: Text.WordWrap;color: "#8b9bb2";font.pixelSize: 10}
+                Text {text: appState.performanceSummary;Layout.fillWidth: true;wrapMode: Text.WordWrap;color: "#e3e3e3";font.pixelSize: 11}
+                Text {text: "Threads by storage type";color: "#f2f2f2";font.pixelSize: 13}
+                Text {text: "Used by Auto. The lower source/destination limit wins. Custom values override hardware limits.";Layout.fillWidth: true;wrapMode: Text.WordWrap;color: "#bcbcbc";font.pixelSize: 10}
                 Repeater {
                     model: [{label:"NVMe SSD",key:"nvmeThreads"},{label:"SATA / other SSD",key:"ssdThreads"},{label:"Mechanical HDD",key:"hddThreads"},{label:"USB / removable",key:"usbThreads"},{label:"Network / SMB",key:"networkThreads"},{label:"Unknown storage",key:"unknownThreads"}]
                     delegate: RowLayout {
                         required property var modelData
                         Layout.fillWidth: true;enabled: !appState.busy
-                        Text {text: modelData.label;Layout.fillWidth: true;color: "#b2bfd2";font.pixelSize: 11}
+                        Text {text: modelData.label;Layout.fillWidth: true;color: "#e3e3e3";font.pixelSize: 11}
                         ModernComboBox {
                             Layout.preferredWidth: 180
                             model: drawer.threadChoices.map(n=>n===0 ? "Auto (hardware detected)" : n+" thread"+(n===1 ? "" : "s"))
@@ -75,21 +75,21 @@ Drawer {
                         }
                     }
                 }
-                Rectangle {Layout.fillWidth: true;height: 1;color: "#303947"}
-                Text {text: "Window defaults";color: "#dce5f3";font.pixelSize: 13}
+                Rectangle {Layout.fillWidth: true;height: 1;color: "#474747"}
+                Text {text: "Window defaults";color: "#f2f2f2";font.pixelSize: 13}
                 ModernComboBox {Layout.fillWidth: true;model: ["Compact window", "Detailed window"];currentIndex: drawer.preferences.detailed ? 1 : 0;onActivated: drawer.preferences.detailed=currentIndex===1}
                 LiquidCheckBox {text: "Keep window on top by default";checked: drawer.preferences.pinned;onClicked: drawer.preferences.pinned=checked}
                 LiquidCheckBox {text: "Show completion notifications";checked: drawer.preferences.completionNotifications;onClicked: drawer.preferences.completionNotifications=checked}
                 LiquidCheckBox {text: "Animate notifications";checked: drawer.preferences.notificationAnimations;onClicked: drawer.preferences.notificationAnimations=checked}
-                Text {text: "After a successful transfer";color: "#8b9bb2";font.pixelSize: 11}
+                Text {text: "After a successful transfer";color: "#bcbcbc";font.pixelSize: 11}
                 ModernComboBox {Layout.fillWidth: true;model: ["Keep open", "Close window", "Sleep PC…", "Eject drive…"];currentIndex: drawer.preferences.afterCopy;onActivated: drawer.preferences.afterCopy=currentIndex}
                 GlassButton {text: "Open destination folder";enabled: appState.destination.length>0;onClicked: appState.openDestination()}
-                Rectangle {Layout.fillWidth: true;height: 1;color: "#303947"}
+                Rectangle {Layout.fillWidth: true;height: 1;color: "#474747"}
                 Text {
                     visible: !!drawer.currentGroup && !!drawer.currentGroup.help
                     text: drawer.currentGroup ? drawer.currentGroup.help || "" : ""
                     Layout.fillWidth: true;wrapMode: Text.WordWrap
-                    color: "#8b9bb2";font.pixelSize: 11;Layout.bottomMargin: 5
+                    color: "#bcbcbc";font.pixelSize: 11;Layout.bottomMargin: 5
                 }
                 ButtonGroup {id: choices}
                 Repeater {
@@ -147,7 +147,7 @@ Drawer {
                 ColumnLayout {
                     visible: !drawer.currentGroup
                     Layout.fillWidth: true;spacing: 10;enabled: !appState.busy
-                    Text {text: "Save these settings for another transfer.";color: "#8b9bb2";font.pixelSize: 12}
+                    Text {text: "Save these settings for another transfer.";color: "#bcbcbc";font.pixelSize: 12}
                     RowLayout {
                         Layout.fillWidth: true
                         GlassField {id: presetName;placeholderText: "Preset name";Layout.fillWidth: true}
@@ -159,7 +159,7 @@ Drawer {
         }
         RowLayout {
             Layout.fillWidth: true
-            Text {Layout.fillWidth: true;text: "StrataCopy v" + Qt.application.version;color: "#7e8da3";font.pixelSize: 10}
+            Text {Layout.fillWidth: true;text: "StrataCopy v" + Qt.application.version;color: "#999999";font.pixelSize: 10}
             GlassButton {
                 objectName: "checkForUpdates"
                 text: appState.checkingForUpdates ? "Checking…" : "Check for Updates";implicitHeight: 29

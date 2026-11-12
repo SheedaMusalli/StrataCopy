@@ -14,5 +14,7 @@ class PostCopyHashVerifier {
                            const std::function<void(FileEntry)> &);
     static VerificationResult verify(const RobocopyInvocation &, const RobocopyProfile &,
                                      const std::atomic_bool &, const std::function<void(FileEntry)> &);
+    static VerificationResult generate(const RobocopyInvocation &, const RobocopyProfile &,
+                                       const std::atomic_bool &, const std::function<void(FileEntry)> &);
 };
 } // namespace strata
