@@ -555,7 +555,7 @@ bool MainCoordinatorViewModel::start(bool dryRun, bool destructiveConfirmed) {
     m_totalFiles = 0;
     m_outcome.clear();
     m_message.clear();
-    m_phase = "Scanning sources";
+    m_phase = "Preparing transfer";
     if (!m_storeReady) {
         m_message = "A working queue journal is required to generate checksums.";
         emit stateChanged();

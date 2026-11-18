@@ -74,7 +74,7 @@ int main(int argc, char **argv) {
     QApplication app(argc, argv);
     app.setApplicationName("StrataCopy");
     app.setOrganizationName("StrataCopy");
-    app.setApplicationVersion("2.0.0");
+    app.setApplicationVersion("2.1.0");
     app.setWindowIcon(QIcon(":/resources/icons/stratacopy.svg"));
     qInstallMessageHandler(logMessage);
 #ifdef STRATACOPY_UI_TEST_HOOKS
@@ -196,6 +196,8 @@ int main(int argc, char **argv) {
     trayMenu.addSeparator();
     auto *exitAction = trayMenu.addAction("Exit");
     QSystemTrayIcon tray(QIcon(":/resources/icons/stratacopy.svg"));
+    engine.rootContext()->setContextProperty("trayControl", &tray);
+    window->setProperty("traySupported", QSystemTrayIcon::isSystemTrayAvailable());
     tray.setToolTip("StrataCopy");
     tray.setContextMenu(&trayMenu);
     // Concurrent Explorer requests run in their own short-lived windows. They
@@ -222,6 +224,23 @@ int main(int argc, char **argv) {
         else revealFromTray();
     });
     QObject::connect(exitAction, &QAction::triggered, &app, &QCoreApplication::quit);
+    const auto updateTrayProgress = [&] {
+        QString tip = "StrataCopy";
+        if (coordinator.busy()) {
+            tip += "\n" + coordinator.phase();
+            if (coordinator.totalSize() != "0 B")
+                tip += QString(" · %1%").arg(qRound(coordinator.progress() * 100));
+            else
+                tip += QString(" · %1 written").arg(coordinator.formatBytes(
+                    coordinator.stats().value("writeBytes").toULongLong()));
+            const auto speed = coordinator.stats().value("writeMbps").toDouble();
+            if (speed > 0)
+                tip += QString(" · %1 MB/s").arg(speed, 0, 'f', 1);
+        }
+        tray.setToolTip(tip);
+    };
+    QObject::connect(&coordinator, &strata::MainCoordinatorViewModel::statsChanged, &tray, updateTrayProgress);
+    QObject::connect(&coordinator, &strata::MainCoordinatorViewModel::stateChanged, &tray, updateTrayProgress);
     bool previouslyBusy = coordinator.busy();
     QObject::connect(&coordinator, &strata::MainCoordinatorViewModel::stateChanged, &app, [&] {
         exitAction->setEnabled(!coordinator.busy());

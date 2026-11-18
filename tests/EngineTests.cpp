@@ -78,13 +78,13 @@ class EngineTests : public QObject {
         qputenv("STRATACOPY_DATA_DIR", isolated.path().toUtf8());
         const auto guard = qScopeGuard([&] {if(old.isNull()) qunsetenv("STRATACOPY_DATA_DIR"); else qputenv("STRATACOPY_DATA_DIR", old);});
         const quint64 ram = 32ULL * 1024 * 1024 * 1024;
-        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Nvme, 16, ram), 32);
-        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Nvme, 64, ram), 32);
-        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Ssd, 32, ram), 8);
-        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Mechanical, 32, ram), 4);
-        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Removable, 32, ram), 4);
+        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Nvme, 16, ram), 48);
+        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Nvme, 64, ram), 64);
+        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Ssd, 32, ram), 24);
+        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Mechanical, 32, ram), 8);
+        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Removable, 32, ram), 8);
         QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Unknown, 32, ram), 4);
-        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Nvme, 1, ram), 2);
+        QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Nvme, 1, ram), 3);
         QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Nvme, 16, 4ULL*1024*1024*1024), 4);
         QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Nvme, 16, 0), 4);
         QCOMPARE(DriveHardwareDetector::recommendedThreads(StorageTier::Nvme, 16, 8ULL*1024*1024*1024), 8);
@@ -96,7 +96,7 @@ class EngineTests : public QObject {
         QCOMPARE(DriveHardwareDetector::storageThreadLimit(StorageTier::Removable,16,ram,overrides),1);
         QCOMPARE(DriveHardwareDetector::storageThreadLimit(StorageTier::Network,16,ram,overrides),12);
         QCOMPARE(DriveHardwareDetector::storageThreadLimit(StorageTier::Unknown,16,ram,overrides),8);
-        QCOMPARE(DriveHardwareDetector::storageThreadLimit(StorageTier::Nvme,16,ram,{{"nvmeThreads",0}}),32);
+        QCOMPARE(DriveHardwareDetector::storageThreadLimit(StorageTier::Nvme,16,ram,{{"nvmeThreads",0}}),48);
         QCOMPARE(RobocopyProfile::preset(4).number("threadCount"), 4);
         QCOMPARE(RobocopyProfile::preset(5).number("retryCount"), 0);
         const auto extreme = RobocopyCommandCompiler::arguments({"C:/s", "D:/d", {}, false}, RobocopyProfile::preset(5));

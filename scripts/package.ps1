@@ -1,4 +1,4 @@
-param([switch]$SkipBuild,[string]$Version='2.0.0')
+param([switch]$SkipBuild,[string]$Version='2.1.0')
 $ErrorActionPreference='Stop'
 $taskRoot=Split-Path -Parent $PSScriptRoot
 if(!$SkipBuild){& "$PSScriptRoot\build.ps1" -Deploy}

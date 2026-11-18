@@ -1,3 +1,11 @@
+## StrataCopy v2.1.0
+
+- Skip the source pre-scan when destination conflicts are unlikely.
+- Show transferred bytes, total size, and ETA above the speed graph when available.
+- Minimize transfers to the tray and hover over the icon for progress.
+- Open Settings and queue additional files by dropping them during a transfer.
+- Increase Auto worker limits on HDDs, USB drives, and SSDs. Small batches of explicitly selected large files can use unbuffered I/O.
+
 ## StrataCopy v2.0.0
 
 - Elevated retries enable backup privileges before scanning protected sources or taking the same-volume move path, and open a visible transfer window with the correct data directory.

@@ -9,6 +9,7 @@ ApplicationWindow {
     minimumWidth: 600; minimumHeight: detailsExpanded ? 650 : 480
     property bool forceTransferWindow: false
     property bool openedFromTray: false
+    property bool traySupported: false
     visible: forceTransferWindow || !transferOnly; title: "StrataCopy"; color: "#2b2b2b"
     flags: Qt.Window | Qt.FramelessWindowHint | (pinned ? Qt.WindowStaysOnTopHint : 0)
     property bool detailsExpanded: uiPreferences.detailed
@@ -49,6 +50,7 @@ ApplicationWindow {
             Text {text: "StrataCopy";font.pixelSize: 12;font.weight: Font.Medium;color: "#f2f2f2"}
             Item {Layout.fillWidth: true;Layout.fillHeight: true;MouseArea {anchors.fill: parent;onPressed: root.startSystemMove()}}
             GlassButton {text: root.pinned ? "Pinned" : "Pin";accent: root.pinned;implicitWidth: 42;implicitHeight: 23;onClicked: root.pinned=!root.pinned;ToolTip.visible: hovered;ToolTip.text: "Keep on top"}
+            GlassButton {objectName: "minimizeToTray";text: "⌄";implicitWidth: 27;implicitHeight: 23;enabled: root.traySupported;onClicked: {trayControl.show();root.hide()} ToolTip.visible: hovered;ToolTip.text: "Minimize to system tray";Accessible.name: "Minimize to system tray"}
             GlassButton {text: "−";implicitWidth: 27;implicitHeight: 23;onClicked: root.showMinimized()}
             GlassButton {text: "×";implicitWidth: 27;implicitHeight: 23;onClicked: root.close()}
         }
@@ -76,7 +78,12 @@ ApplicationWindow {
     }
     DropArea {
         anchors.fill: parent
-        onDropped: function(drop){if(drop.hasUrls){appState.addSources(drop.urls);drop.acceptProposedAction()}}
+        onDropped: function(drop) {
+            if (drop.hasUrls) {
+                appState.addSources(drop.urls)
+                drop.accept(Qt.CopyAction)
+            }
+        }
         Rectangle {anchors.fill: parent;visible: parent.containsDrag;color: "#e6282828";border.color: "#65ade8";border.width: 2;Text {anchors.centerIn: parent;text: appState.busy ? "Drop to queue the next transfer" : "Drop to add files";font.pixelSize: 18;color: "#f2f2f2"}}
     }
     ParameterMatrixDrawer {id: parameters;preferences: uiPreferences;onMoveWindowRequested: root.startSystemMove()}

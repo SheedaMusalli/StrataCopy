@@ -147,7 +147,7 @@ QVariantList RobocopyProfile::schema() {
     choice("Performance profile", "performanceMode",
            {"Auto (recommended)", "Safe / Silent", "NVMe Extreme", "Manual"},
            {"AUTO", "4", "32", "MANUAL"},
-           "Auto selects 4–32 threads from both drives, CPU and RAM (USB starts at 4). Extreme uses 32 threads; it is not guaranteed faster. Manual keeps your chosen settings.");
+           "Auto selects workers from both drives, CPU and RAM, up to 64 for NVMe and 24 for SSDs. Extreme uses 32 threads; it is not guaranteed faster. Manual keeps your chosen settings.");
     fields("D / Performance", {f("enableMultithreading", "Multithreaded transfers", "/MT"),
                                f("threadCount", "Worker threads (1–128)", "/MT:n", "int"),
                                f("unbufferedIo", "Unbuffered disk I/O", "/J"),

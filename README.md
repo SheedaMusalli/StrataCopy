@@ -4,7 +4,7 @@
   <p><strong>A compact Windows copy utility. Powered by Robocopy.</strong></p>
   <p>Modern controls, native Explorer integration, and transfer settings you can inspect.</p>
   <p>
-    <img alt="Version 2.0.0" src="https://img.shields.io/badge/version-2.0.0-64b5ff">
+    <img alt="Version 2.1.0" src="https://img.shields.io/badge/version-2.1.0-64b5ff">
     <img alt="Windows x64" src="https://img.shields.io/badge/platform-Windows_x64-0078D4">
     <img alt="C++20" src="https://img.shields.io/badge/C%2B%2B-20-00599C">
     <img alt="Qt 6.8.3" src="https://img.shields.io/badge/Qt-6.8.3-41CD52">
@@ -18,11 +18,11 @@
 
 StrataCopy brings Windows' built-in Robocopy engine into a small desktop interface. Add files or folders, pick a destination, and copy. Expand Details when you need the activity list and completion actions. Recent transfers appear on the main screen.
 
-**v2.0.0 is the current release build.** Copy, move, mirror and dry-run operations run through the system `robocopy.exe`. StrataCopy manages the queue, process lifecycle, interface and optional readback verification. This version adds a handler choice for Explorer actions, concurrent Explorer transfers, elevated retries and faster same-volume moves.
+**v2.1.0** improves transfer startup and adds live tray progress. Copy, move, mirror and dry-run operations run through the system `robocopy.exe`. StrataCopy manages the queue, process lifecycle, interface and optional readback verification. This version adds a handler choice for Explorer actions, concurrent Explorer transfers, elevated retries and faster same-volume moves.
 
 ## Features
 
-| Area | Included in v2.0.0 |
+| Area | Included in v2.1.0 |
 | --- | --- |
 | Compact interface | Compact dark copy window; expandable details; original icon; native move/resize and keep-on-top |
 | Explorer integration | Optional handling of Ctrl+C/Ctrl+X → Ctrl+V, native Paste menus, command-bar Paste, and filesystem drag-and-drop |
@@ -37,7 +37,7 @@ StrataCopy brings Windows' built-in Robocopy engine into a small desktop interfa
 
 ### Installer
 
-1. Download **StrataCopy-2.0.0-Setup-x64.exe** from [Releases](https://github.com/SheedaMusalli/StrataCopy/releases/latest).
+1. Download **StrataCopy-2.1.0-Setup-x64.exe** from [Releases](https://github.com/SheedaMusalli/StrataCopy/releases/latest).
 2. Run the installer and approve the Windows administrator prompt. It installs StrataCopy under Program Files. The app itself runs normally as your account; transfers that require protected access can be retried as administrator.
 3. Choose whether to create a desktop shortcut. Explorer copy and move integration is enabled by default on a fresh install.
 4. Open StrataCopy, add files or folders, select a destination, and press **Copy**.
@@ -47,7 +47,7 @@ StrataCopy brings Windows' built-in Robocopy engine into a small desktop interfa
 GitHub displays a SHA-256 digest beside the installer asset. Compare it with:
 
 ```powershell
-Get-FileHash .\StrataCopy-2.0.0-Setup-x64.exe -Algorithm SHA256
+Get-FileHash .\StrataCopy-2.1.0-Setup-x64.exe -Algorithm SHA256
 ```
 
 ## Using the copy window
@@ -59,6 +59,10 @@ Get-FileHash .\StrataCopy-2.0.0-Setup-x64.exe -Algorithm SHA256
 The default **After copying** action is **Close window**, which runs only after a successful transfer. Choose **Keep open** when you want to inspect the finished activity. A window opened from the tray stays open by default. Sleep and eject actions ask for confirmation. Failed or cancelled transfers remain open.
 
 Copy and move start without a command confirmation. Mirror asks before deleting destination extras. Existing-file decisions include a Do this for all conflicts checkbox, scoped to one transfer. Cancel stops further work but does not roll back completed copies.
+
+While a transfer runs, open **Settings** to inspect transfer options or drop more files onto the window to queue them for its destination. The **Minimize to system tray** button hides the window. Hover over its tray icon for transfer status, and double-click to restore it.
+
+Automatic existing-file policies start Robocopy without a separate source scan. **Ask for each existing file** scans when destination conflicts are possible. Without a scan, transfer speed and bytes written are available while the total and ETA are unknown.
 
 ### Existing files
 
@@ -74,7 +78,7 @@ Cancel stops the remaining transfer. Source contents are copied by Robocopy; dup
 
 Enable **Settings → Use StrataCopy for Explorer copy and move**. Uncheck it to restore Windows copying for subsequent Explorer operations. The choice persists across sign-ins and installer upgrades. Separate **Copy with StrataCopy** and **Paste with StrataCopy** actions can be added under Windows 11's **Show more options** menu.
 
-Native Copy and Cut still populate Explorer's clipboard. The helper loads `StrataCopyNative-2.0.0-p5.dll` into x64 Explorer using thread-specific message hooks. The DLL intercepts normal `IFileOperation` copy/move requests and queues them for StrataCopy. No Windows system files are replaced, and there is no global keyboard hook.
+Native Copy and Cut still populate Explorer's clipboard. The helper loads `StrataCopyNative-2.1.0-p5.dll` into x64 Explorer using thread-specific message hooks. The DLL intercepts normal `IFileOperation` copy/move requests and queues them for StrataCopy. No Windows system files are replaced, and there is no global keyboard hook.
 
 Requests are saved atomically before handoff. Each Explorer copy or move can run independently, so starting another transfer while one is active opens a separate StrataCopy window. Each window reports its own progress and can be cancelled without stopping other operations. Files dropped into the main window during a transfer remain queued for that window's next run. Windows handles all delete and recycle actions.
 
@@ -160,7 +164,7 @@ Right-click the StrataCopy tray icon and select **Show window only during transf
 Successful transfers show a small Steam-style completion notification near the bottom-right of the transfer screen, with total elapsed time. It slides in without taking focus, stays for about five seconds and can be dismissed. It also works when tray-only mode hides the copy window.
 
 ### Hardware-aware performance
-The installer records local CPU, RAM and fixed-drive types in the application data folder. Auto (recommended) rechecks source and destination storage for each transfer and uses the lower thread limit: HDD/unknown up to 4, USB/removable up to 4, SSD/network up to 8, NVMe up to 32. Low-core and low-memory machines receive lower limits. These are conservative heuristics, not measured optimal throughput or guaranteed lag-free settings.
+The installer records local CPU, RAM and fixed-drive types in the application data folder. Auto (recommended) rechecks source and destination storage for each transfer and uses the lower thread limit: HDD and USB/removable up to 8, unknown up to 4, SSD up to 24, network up to 8, NVMe up to 64. Low-core and low-memory machines receive lower limits. These are conservative heuristics, not measured optimal throughput or guaranteed lag-free settings.
 
 Settings → Performance profile offers Auto, Safe / Silent (4), NVMe Extreme (32, no retries), and Manual (1–128). Changing worker threads selects Manual. Explorer transfers retain the selected performance policy. Auto does not run benchmarks or change its thread count in the middle of a transfer. General defaults use buffered I/O; unbuffered I/O remains available for large files. File activity logging, conflicts and verification remain supported. Archive streaming is not part of this feature.
 

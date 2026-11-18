@@ -156,7 +156,7 @@ void RobocopyProcessSupervisor::run(const QList<RobocopyInvocation> &jobs, Roboc
         QStringList sources;
         for (const auto &job : jobs)
             sources << job.source;
-        int threads = 32;
+        int threads = 128;
         if (jobs.isEmpty()) {
             threads = DriveHardwareDetector::recommendedThreads(
                 StorageTier::Unknown, DriveHardwareDetector::logicalProcessors(),
@@ -171,7 +171,7 @@ void RobocopyProcessSupervisor::run(const QList<RobocopyInvocation> &jobs, Roboc
         profile.values["threadCount"] = threads;
         emit resolvedProfile(profile.values);
     }
-    const bool interactive = promptConflicts && !profile.flag("dryRunListOnly");
+    const bool askForConflicts = promptConflicts && !profile.flag("dryRunListOnly");
     auto complete = [&](bool ok, QString message) {
         m_running = false;
         emit finished(ok && !m_cancel.load(), m_cancel.load(), std::move(message));
@@ -196,8 +196,9 @@ void RobocopyProcessSupervisor::run(const QList<RobocopyInvocation> &jobs, Roboc
         const auto data = (line + '\n').toUtf8();
         return log.write(data) == data.size();
     };
-    emit phaseChanged("Scanning sources");
+    emit phaseChanged("Preparing transfer");
     if (checksumOnly) {
+        emit phaseChanged("Scanning sources");
         quint64 generated = 0, failed = 0;
         emit scanned(0, 0, {});
         for (const auto &job : jobs) {
@@ -360,8 +361,30 @@ void RobocopyProcessSupervisor::run(const QList<RobocopyInvocation> &jobs, Roboc
                 ++it;
         }
     }
+    // A new target tree has no existing files to prompt for. For loose files,
+    // check only their exact target paths instead of enumerating the source.
+    const bool interactive = askForConflicts && std::any_of(work.cbegin(), work.cend(), [](const auto &job) {
+        const auto mayExist = [](const QString &path) {
+            const auto native = QDir::toNativeSeparators(path);
+            if (GetFileAttributesW(reinterpret_cast<LPCWSTR>(native.utf16())) != INVALID_FILE_ATTRIBUTES)
+                return true;
+            const auto error = GetLastError();
+            return error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND;
+        };
+        if (!job.looseFiles)
+            return mayExist(job.destination);
+        return std::any_of(job.files.cbegin(), job.files.cend(), [&](const auto &name) {
+            return mayExist(QDir(job.destination).filePath(name));
+        });
+    });
+    if (interactive)
+        emit phaseChanged("Scanning sources for conflicts");
     std::vector<std::unique_ptr<QTemporaryFile>> manifests;
     for (const auto &job : work) {
+        if (!interactive) {
+            manifests.emplace_back();
+            continue;
+        }
         auto scanProfile = profile;
         std::unique_ptr<QTemporaryFile> manifest;
         bool manifestFailed = false;
@@ -437,7 +460,7 @@ void RobocopyProcessSupervisor::run(const QList<RobocopyInvocation> &jobs, Roboc
             bool duplicate = false;
             if (bulk) {
                 bulk = false;
-                if (interactive) {
+                if (askForConflicts) {
                     // No existing file may be overwritten by a bulk process before a decision.
                     currentProfile.values["collisionPolicy"] = 2;
                     currentProfile.values["fixSecurityOnExisting"] = false;
@@ -487,6 +510,17 @@ void RobocopyProcessSupervisor::run(const QList<RobocopyInvocation> &jobs, Roboc
             }
             if (m_cancel.load())
                 break;
+            // Explicit file selections can use unbuffered I/O for large files
+            // without adding a recursive source scan or changing mixed folders.
+            if (currentProfile.number("performanceMode") == 0 && currentJob.looseFiles &&
+                !currentJob.files.isEmpty() && currentJob.files.size() <= 2 &&
+                currentProfile.mode() != TransferMode::Mirror &&
+                currentProfile.number("accessMode") == int(AccessMode::Standard) &&
+                std::all_of(currentJob.files.cbegin(), currentJob.files.cend(), [&](const auto &name) {
+                    return QFileInfo(QDir(currentJob.source).filePath(name)).size() >= 512LL * 1024 * 1024;
+                })) {
+                currentProfile.values["unbufferedIo"] = true;
+            }
             std::unique_ptr<QTemporaryDir> staging;
             const auto cleanupEmptyStage = qScopeGuard([&] {
                 if (staging &&
@@ -589,10 +623,9 @@ void RobocopyProcessSupervisor::run(const QList<RobocopyInvocation> &jobs, Roboc
                 complete(false, error);
                 return;
             }
-            // Background mode reduces contention with foreground applications and
-            // system work. This is especially useful while a game is active or the
-            // machine is trying to shut down, without throttling transfer I/O itself.
-            SetPriorityClass(process.get(), BELOW_NORMAL_PRIORITY_CLASS | PROCESS_MODE_BACKGROUND_BEGIN);
+            // Only the Safe / Silent profile requests reduced CPU priority.
+            if (currentProfile.number("performanceMode") == 1)
+                SetPriorityClass(process.get(), BELOW_NORMAL_PRIORITY_CLASS);
             writePipe.reset();
             input.reset();
             KernelTelemetryPoller poller;

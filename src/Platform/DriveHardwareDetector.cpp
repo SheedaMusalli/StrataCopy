@@ -76,14 +76,13 @@ quint64 DriveHardwareDetector::memoryBytes() {
 int DriveHardwareDetector::recommendedThreads(StorageTier tier, int processors, quint64 memory) {
     processors = std::clamp(processors, 1, 1024);
     int threads = 4;
-    if (tier == StorageTier::Nvme) threads = std::clamp(processors * 2, 8, 32);
-    else if (tier == StorageTier::Ssd || tier == StorageTier::Network) threads = std::clamp(processors, 4, 8);
-    // USB disks are commonly constrained by the storage device rather than the
-    // CPU. Four workers improve overlap for mixed/small-file workloads without
-    // the seek amplification of high /MT values on a spinning external disk.
-    else if (tier == StorageTier::Removable) threads = 4;
+    if (tier == StorageTier::Nvme) threads = std::clamp(processors * 3, 8, 64);
+    else if (tier == StorageTier::Ssd) threads = std::clamp(processors * 2, 4, 24);
+    else if (tier == StorageTier::Network) threads = std::clamp(processors, 4, 8);
+    else if (tier == StorageTier::Mechanical || tier == StorageTier::Removable)
+        threads = std::clamp(processors, 4, 8);
     // CPU and RAM guards apply even when a fast drive is attached to a small system.
-    threads = std::min(threads, std::max(2, processors * 2));
+    threads = std::min(threads, std::max(2, processors * 3));
     if (!memory || memory <= 4ULL * 1024 * 1024 * 1024) threads = std::min(threads, 4);
     else if (memory <= 8ULL * 1024 * 1024 * 1024) threads = std::min(threads, 8);
     return threads;

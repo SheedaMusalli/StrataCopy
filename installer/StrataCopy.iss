@@ -1,4 +1,4 @@
-#define AppVersion "2.0.0"
+#define AppVersion "2.1.0"
 #ifdef TEST_INSTALLER
   #define AppIdentity "{0F23BE2C-48E1-47CE-A012-20E7728D2C78}"
   #define InstallDirectory "{localappdata}\Programs\StrataCopy"

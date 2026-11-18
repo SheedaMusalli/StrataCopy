@@ -3,6 +3,12 @@ import QtQuick.Controls
 import QtQuick.Layouts
 Item {
     id: view
+    function transferSizeText() {
+        const written = appState.formatBytes(Number(appState.stats.writeBytes || 0))
+        const totalKnown = appState.sourceFileCount > 0 || appState.totalSize !== "0 B"
+        return totalKnown ? written + " of " + appState.totalSize + " transferred"
+                          : written + " transferred · Total unknown"
+    }
     signal addFiles()
     signal addFolder()
     signal chooseDestination()
@@ -55,7 +61,7 @@ Item {
             Layout.fillWidth: true;spacing: 6
             RowLayout {
                 Layout.fillWidth: true
-                Text {text: Math.round(appState.progress*100)+"%";font.pixelSize: 21;font.weight: Font.Medium;color: "#f2f2f2"}
+                Text {text: appState.busy && appState.totalSize === "0 B" ? "—" : Math.round(appState.progress*100)+"%";font.pixelSize: 21;font.weight: Font.Medium;color: "#f2f2f2"}
                 Text {text: appState.busy ? "complete" : appState.progress>0 ? "complete" : "";font.pixelSize: 11;color: "#bdbdbd";Layout.alignment: Qt.AlignBottom;Layout.bottomMargin: 3}
                 Item {Layout.fillWidth: true}
                 Text {text: appState.paused ? "Paused" : Number(appState.stats.writeMbps || 0).toFixed(1)+" MB/s";font.pixelSize: 12;color: "#e8e8e8"}
@@ -67,7 +73,22 @@ Item {
             RowLayout {
                 Layout.fillWidth: true
                 Text {text: appState.busy ? appState.phase : appState.sources.length ? "Ready to start." : "Add items to begin.";color: "#bcbcbc";font.pixelSize: 11;elide: Text.ElideRight;Layout.fillWidth: true}
-                Text {text: "Time remaining: " + appState.eta;color: "#bcbcbc";font.pixelSize: 11}
+            }
+        }
+        RowLayout {
+            visible: appState.busy
+            Layout.fillWidth: true
+            Text {
+                Layout.fillWidth: true
+                elide: Text.ElideRight
+                text: view.transferSizeText()
+                color: "#e8e8e8"
+                font.pixelSize: 12
+            }
+            Text {
+                text: "ETA: " + appState.eta
+                color: "#e8e8e8"
+                font.pixelSize: 12
             }
         }
         Rectangle {
@@ -106,7 +127,7 @@ Item {
         RowLayout {
             Layout.fillWidth: true;Layout.preferredHeight: 34;spacing: 7
             GlassButton {text: view.detailsExpanded ? "Fewer details" : "More details";implicitHeight: 29;onClicked: view.toggleDetails()}
-            GlassButton {visible: !appState.busy;text: "Settings";implicitHeight: 29;onClicked: view.showParameters()}
+            GlassButton {text: "Settings";implicitHeight: 29;onClicked: view.showParameters()}
             GlassButton {visible: !appState.busy && appState.sources.length>0;text: "Test";implicitHeight: 29;onClicked: appState.generateChecksums()}
             GlassButton {visible: !appState.busy;text: "History";implicitHeight: 29;onClicked: view.showHistory()}
             Item {Layout.fillWidth: true}
